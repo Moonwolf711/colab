@@ -1,0 +1,44 @@
+// coLaB shared constants
+
+// Network
+exports.MULTICAST_ADDR = '224.0.0.42';
+exports.DISCOVERY_PORT = 4242;
+exports.STATE_PORT = 4243;
+exports.AUDIO_PORT_BASE = 4244;
+
+// Packet types
+exports.PKT = {
+  DISCOVERY_BEACON: 0x01,
+  DISCOVERY_RESPONSE: 0x02,
+  STATE_SYNC: 0x10,
+  STATE_UPDATE: 0x11,
+  CURSOR_UPDATE: 0x20,
+  AUDIO_DATA: 0x30,
+  HEARTBEAT: 0x40,
+  HEARTBEAT_ACK: 0x41,
+  CONNECT_REQUEST: 0x50,
+  CONNECT_ACCEPT: 0x51,
+  DISCONNECT: 0x52
+};
+
+// Audio
+exports.SAMPLE_RATE = 48000;
+exports.OPUS_FRAME_MS = 20;
+exports.OPUS_FRAME_SAMPLES = 960; // 48000 * 0.02
+exports.OPUS_BITRATE = 128000;
+exports.OPUS_CHANNELS = 2;
+exports.JITTER_BUFFER_FRAMES = 3;
+exports.JITTER_BUFFER_MAX_FRAMES = 5;
+
+// Timing
+exports.HEARTBEAT_INTERVAL_MS = 2000;
+exports.HEARTBEAT_TIMEOUT_MS = 6000; // 3 missed heartbeats
+exports.CURSOR_POLL_HZ = 15;
+exports.CURSOR_POLL_MS = Math.round(1000 / 15);
+exports.PARAM_DEBOUNCE_MS = 30;
+exports.RECONNECT_DELAY_MS = 1000;
+exports.RECONNECT_MAX_ATTEMPTS = 10;
+
+// Limits
+exports.MAX_SHARED_TRACKS = 16;
+exports.MAX_SYNCED_CLIPS = 64;
