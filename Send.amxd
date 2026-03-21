@@ -1,0 +1,268 @@
+{
+	"patcher": {
+		"fileversion": 1,
+		"appversion": {
+			"major": 8,
+			"minor": 6,
+			"revision": 5,
+			"architecture": "x64",
+			"modernui": 1
+		},
+		"classnamespace": "box",
+		"rect": [100, 100, 600, 400],
+		"bglocked": 0,
+		"openinpresentation": 1,
+		"default_fontsize": 12.0,
+		"default_fontname": "Arial",
+		"gridonopen": 1,
+		"gridsize": [15.0, 15.0],
+		"boxes": [
+			{
+				"box": {
+					"id": "obj-1",
+					"maxclass": "live.thisdevice",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [30, 30, 100, 20]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-plugin-in",
+					"maxclass": "newobj",
+					"text": "plugin~ 2",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["signal", "signal"],
+					"patching_rect": [30, 60, 70, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-plugin-out",
+					"maxclass": "newobj",
+					"text": "plugout~ 2",
+					"numinlets": 2,
+					"numoutlets": 0,
+					"patching_rect": [30, 300, 70, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-js",
+					"maxclass": "newobj",
+					"text": "js js/send/send-main.js",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [200, 150, 150, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-snapshot-l",
+					"maxclass": "newobj",
+					"text": "snapshot~ 20",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": ["float"],
+					"patching_rect": [200, 90, 80, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-snapshot-r",
+					"maxclass": "newobj",
+					"text": "snapshot~ 20",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": ["float"],
+					"patching_rect": [300, 90, 80, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-toggle",
+					"maxclass": "live.text",
+					"varname": "send_enable",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [200, 30, 80, 25],
+					"presentation": 1,
+					"presentation_rect": [5, 5, 80, 22],
+					"parameter_enable": 1,
+					"saved_attribute_attributes": {
+						"valueof": {
+							"parameter_longname": "Send Enable",
+							"parameter_shortname": "Send",
+							"parameter_type": 2,
+							"parameter_mmax": 1,
+							"parameter_enum": ["OFF", "SEND"]
+						}
+					},
+					"text": "OFF",
+					"texton": "SEND"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-enable-msg",
+					"maxclass": "message",
+					"text": "enable",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [200, 55, 42, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-disable-msg",
+					"maxclass": "message",
+					"text": "disable",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [260, 55, 45, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-route-toggle",
+					"maxclass": "newobj",
+					"text": "route 0 1",
+					"numinlets": 1,
+					"numoutlets": 3,
+					"outlettype": ["", "", ""],
+					"patching_rect": [200, 40, 80, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-label",
+					"maxclass": "comment",
+					"text": "coLaB Send",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [30, 340, 100, 20],
+					"presentation": 1,
+					"presentation_rect": [90, 5, 80, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-udpsend",
+					"maxclass": "newobj",
+					"text": "udpsend 127.0.0.1 4244",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [200, 200, 145, 22],
+					"varname": "udpsend_audio"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-loadbang",
+					"maxclass": "newobj",
+					"text": "loadbang",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": ["bang"],
+					"patching_rect": [350, 30, 58, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-init-msg",
+					"maxclass": "message",
+					"text": "init 0",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [350, 55, 40, 22]
+				}
+			}
+		],
+		"lines": [
+			{
+				"patchline": {
+					"source": ["obj-plugin-in", 0],
+					"destination": ["obj-plugin-out", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-plugin-in", 1],
+					"destination": ["obj-plugin-out", 1]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-plugin-in", 0],
+					"destination": ["obj-snapshot-l", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-plugin-in", 1],
+					"destination": ["obj-snapshot-r", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-toggle", 0],
+					"destination": ["obj-route-toggle", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-route-toggle", 0],
+					"destination": ["obj-disable-msg", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-route-toggle", 1],
+					"destination": ["obj-enable-msg", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-enable-msg", 0],
+					"destination": ["obj-js", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-disable-msg", 0],
+					"destination": ["obj-js", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-js", 0],
+					"destination": ["obj-udpsend", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-loadbang", 0],
+					"destination": ["obj-init-msg", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-init-msg", 0],
+					"destination": ["obj-js", 0]
+				}
+			}
+		],
+		"parameters": {
+			"parameterbanks": {}
+		},
+		"dependency_cache": [],
+		"autosave": 0
+	}
+}

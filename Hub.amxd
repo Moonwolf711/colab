@@ -1,0 +1,389 @@
+{
+	"patcher": {
+		"fileversion": 1,
+		"appversion": {
+			"major": 8,
+			"minor": 6,
+			"revision": 5,
+			"architecture": "x64",
+			"modernui": 1
+		},
+		"classnamespace": "box",
+		"rect": [100, 100, 800, 600],
+		"bglocked": 0,
+		"openinpresentation": 1,
+		"default_fontsize": 12.0,
+		"default_fontname": "Arial",
+		"gridonopen": 1,
+		"gridsize": [15.0, 15.0],
+		"gridsnaponopen": 1,
+		"objectsnaponopen": 1,
+		"statusbarvisible": 2,
+		"toolbarvisible": 1,
+		"lefttoolbarpinned": 0,
+		"tede": 0,
+		"maxwindowzoom": 1.0,
+		"boxes": [
+			{
+				"box": {
+					"id": "obj-1",
+					"maxclass": "live.thisdevice",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [30, 30, 100, 20]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-2",
+					"maxclass": "newobj",
+					"text": "js js/hub/hub-main.js",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [30, 180, 200, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-3",
+					"maxclass": "newobj",
+					"text": "loadbang",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": ["bang"],
+					"patching_rect": [30, 60, 58, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-4",
+					"maxclass": "message",
+					"text": "init",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [30, 90, 32, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-5",
+					"maxclass": "newobj",
+					"text": "udpsend 127.0.0.1 4243",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [30, 270, 145, 22],
+					"varname": "udpsend_state"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-6",
+					"maxclass": "newobj",
+					"text": "udpreceive 4243",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [30, 310, 97, 22],
+					"varname": "udpreceive_state"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-7",
+					"maxclass": "newobj",
+					"text": "udpsend 127.0.0.1 4244",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [250, 270, 145, 22],
+					"varname": "udpsend_audio"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-8",
+					"maxclass": "newobj",
+					"text": "udpreceive 4244",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [250, 310, 97, 22],
+					"varname": "udpreceive_audio"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-9",
+					"maxclass": "message",
+					"text": "incoming_state $1",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [30, 345, 110, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-10",
+					"maxclass": "message",
+					"text": "incoming_audio $1",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [250, 345, 110, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-11",
+					"maxclass": "live.text",
+					"varname": "connect_btn",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [500, 60, 100, 30],
+					"presentation": 1,
+					"presentation_rect": [10, 10, 100, 25],
+					"parameter_enable": 1,
+					"saved_attribute_attributes": {
+						"valueof": {
+							"parameter_longname": "Connect",
+							"parameter_shortname": "Connect",
+							"parameter_type": 2,
+							"parameter_mmax": 1,
+							"parameter_enum": ["Connect", "Disconnect"]
+						}
+					},
+					"text": "Connect",
+					"texton": "Disconnect"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-12",
+					"maxclass": "live.text",
+					"varname": "ip_display",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [500, 100, 150, 20],
+					"presentation": 1,
+					"presentation_rect": [10, 40, 150, 18],
+					"parameter_enable": 0,
+					"text": "Partner IP: --"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-13",
+					"maxclass": "live.text",
+					"varname": "status_display",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [500, 130, 150, 20],
+					"presentation": 1,
+					"presentation_rect": [10, 60, 150, 18],
+					"parameter_enable": 0,
+					"text": "Status: Disconnected"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-14",
+					"maxclass": "live.text",
+					"varname": "latency_display",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [500, 160, 150, 20],
+					"presentation": 1,
+					"presentation_rect": [10, 80, 150, 18],
+					"parameter_enable": 0,
+					"text": "Latency: -- ms"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-15",
+					"maxclass": "live.text",
+					"varname": "cursor_display",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [500, 190, 200, 20],
+					"presentation": 1,
+					"presentation_rect": [10, 100, 200, 18],
+					"parameter_enable": 0,
+					"text": "Partner: --"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-16",
+					"maxclass": "textedit",
+					"varname": "ip_input",
+					"numinlets": 1,
+					"numoutlets": 4,
+					"outlettype": ["", "int", "", ""],
+					"patching_rect": [500, 30, 150, 22],
+					"presentation": 1,
+					"presentation_rect": [115, 10, 120, 25],
+					"text": "192.168.1."
+				}
+			},
+			{
+				"box": {
+					"id": "obj-17",
+					"maxclass": "message",
+					"text": "connect $1",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [500, 230, 70, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-18",
+					"maxclass": "message",
+					"text": "disconnect",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [580, 230, 65, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-19",
+					"maxclass": "newobj",
+					"text": "route 0 1",
+					"numinlets": 1,
+					"numoutlets": 3,
+					"outlettype": ["", "", ""],
+					"patching_rect": [500, 200, 80, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-20",
+					"maxclass": "comment",
+					"text": "coLaB Hub v0.1.0\nReal-time collaborative production",
+					"linecount": 2,
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [30, 420, 250, 34],
+					"presentation": 1,
+					"presentation_rect": [10, 125, 230, 34]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-midiin",
+					"maxclass": "midiin",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": ["int"],
+					"patching_rect": [30, 470, 50, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-midiout",
+					"maxclass": "midiout",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [30, 500, 54, 22]
+				}
+			}
+		],
+		"lines": [
+			{
+				"patchline": {
+					"source": ["obj-3", 0],
+					"destination": ["obj-4", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-4", 0],
+					"destination": ["obj-2", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-6", 0],
+					"destination": ["obj-9", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-9", 0],
+					"destination": ["obj-2", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-8", 0],
+					"destination": ["obj-10", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-10", 0],
+					"destination": ["obj-2", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-16", 0],
+					"destination": ["obj-17", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-11", 0],
+					"destination": ["obj-19", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-19", 0],
+					"destination": ["obj-18", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-19", 1],
+					"destination": ["obj-17", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-17", 0],
+					"destination": ["obj-2", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-18", 0],
+					"destination": ["obj-2", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-midiin", 0],
+					"destination": ["obj-midiout", 0]
+				}
+			}
+		],
+		"parameters": {
+			"parameterbanks": {}
+		},
+		"dependency_cache": [],
+		"autosave": 0
+	}
+}

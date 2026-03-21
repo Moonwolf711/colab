@@ -1,0 +1,206 @@
+{
+	"patcher": {
+		"fileversion": 1,
+		"appversion": {
+			"major": 8,
+			"minor": 6,
+			"revision": 5,
+			"architecture": "x64",
+			"modernui": 1
+		},
+		"classnamespace": "box",
+		"rect": [100, 100, 600, 400],
+		"bglocked": 0,
+		"openinpresentation": 1,
+		"default_fontsize": 12.0,
+		"default_fontname": "Arial",
+		"gridonopen": 1,
+		"gridsize": [15.0, 15.0],
+		"boxes": [
+			{
+				"box": {
+					"id": "obj-1",
+					"maxclass": "live.thisdevice",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [30, 30, 100, 20]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-plugin-in",
+					"maxclass": "newobj",
+					"text": "plugin~ 2",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["signal", "signal"],
+					"patching_rect": [30, 60, 70, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-plugin-out",
+					"maxclass": "newobj",
+					"text": "plugout~ 2",
+					"numinlets": 2,
+					"numoutlets": 0,
+					"patching_rect": [30, 300, 70, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-js",
+					"maxclass": "newobj",
+					"text": "js js/recv/recv-main.js",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [200, 150, 150, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-udpreceive",
+					"maxclass": "newobj",
+					"text": "udpreceive 4244",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [200, 80, 97, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-audio-msg",
+					"maxclass": "message",
+					"text": "audio_in $1",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [200, 110, 72, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-label",
+					"maxclass": "comment",
+					"text": "coLaB Receive",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [30, 340, 100, 20],
+					"presentation": 1,
+					"presentation_rect": [5, 5, 100, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-stats-label",
+					"maxclass": "live.text",
+					"varname": "recv_status",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"outlettype": ["", ""],
+					"patching_rect": [200, 200, 180, 20],
+					"presentation": 1,
+					"presentation_rect": [5, 28, 180, 18],
+					"parameter_enable": 0,
+					"text": "Buf: 0/3 | Loss: 0%"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-loadbang",
+					"maxclass": "newobj",
+					"text": "loadbang",
+					"numinlets": 1,
+					"numoutlets": 1,
+					"outlettype": ["bang"],
+					"patching_rect": [350, 30, 58, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-init-msg",
+					"maxclass": "message",
+					"text": "init 0",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [350, 55, 40, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-stats-metro",
+					"maxclass": "newobj",
+					"text": "metro 1000",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": ["bang"],
+					"patching_rect": [350, 80, 69, 22]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-stats-msg",
+					"maxclass": "message",
+					"text": "stats",
+					"numinlets": 2,
+					"numoutlets": 1,
+					"outlettype": [""],
+					"patching_rect": [350, 105, 35, 22]
+				}
+			}
+		],
+		"lines": [
+			{
+				"patchline": {
+					"source": ["obj-udpreceive", 0],
+					"destination": ["obj-audio-msg", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-audio-msg", 0],
+					"destination": ["obj-js", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-loadbang", 0],
+					"destination": ["obj-init-msg", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-loadbang", 0],
+					"destination": ["obj-stats-metro", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-init-msg", 0],
+					"destination": ["obj-js", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-stats-metro", 0],
+					"destination": ["obj-stats-msg", 0]
+				}
+			},
+			{
+				"patchline": {
+					"source": ["obj-stats-msg", 0],
+					"destination": ["obj-js", 0]
+				}
+			}
+		],
+		"parameters": {
+			"parameterbanks": {}
+		},
+		"dependency_cache": [],
+		"autosave": 0
+	}
+}
