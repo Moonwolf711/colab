@@ -1,147 +1,115 @@
-// coLaB Hub v0.4.1 – FIXED polling crash
+// coLaB Hub v0.4.3 – No Task object (uses metro in Max patcher instead)
 
 var inlets = 1;
-var outlets = 2;
+var outlets = 1;
 
 var userId = 'user-' + Math.random().toString(36).substr(2, 6);
 var tracks = [];
 var cursorTrack = -1;
 var cursorScene = -1;
-var pollTask = null;
 var connected = false;
 var partnerHost = "";
-var partnerPort = 8001;
-var liveSet = null;
-var trackIdMap = {};  // id → index lookup (fast)
-var sceneIdMap = {};  // id → index lookup (fast)
-var viewAPI = null;   // cached view API
+var ready = false;
 
 function init() {
-    post("coLaB Hub v0.4.1 initializing...\n");
-    post("userId: " + userId + "\n");
-    liveSet = new LiveAPI("live_set");
-    viewAPI = new LiveAPI("live_set view");
+    post("coLaB Hub v0.4.3 initializing...\n");
     readTracks();
-    buildSceneMap();
-    startPolling();
-    post("Ready. " + tracks.length + " tracks. Polling active.\n");
+    ready = true;
+    post("Ready. " + tracks.length + " tracks. Wire a [metro 100] → [poll] message → js for cursor tracking.\n");
 }
 
 function readTracks() {
     tracks = [];
-    trackIdMap = {};
-    var count = liveSet.getcount("tracks");
+    var ls = new LiveAPI("live_set");
+    var count = ls.getcount("tracks");
     for (var i = 0; i < count; i++) {
         var t = new LiveAPI("live_set tracks " + i);
         var name = t.get("name").toString();
-        var tid = parseInt(t.id);
-        tracks.push({ index: i, name: name, id: tid });
-        trackIdMap[tid] = i;
+        tracks.push({ index: i, name: name, id: parseInt(t.id) });
         post("  Track " + i + ": " + name + "\n");
     }
 }
 
-function buildSceneMap() {
-    sceneIdMap = {};
-    var count = liveSet.getcount("scenes");
-    for (var i = 0; i < count; i++) {
-        var s = new LiveAPI("live_set scenes " + i);
-        sceneIdMap[parseInt(s.id)] = i;
-    }
-}
-
-function getSelectedTrack() {
+// Called by [metro 100] → [message: poll] → js
+function poll() {
+    if (!ready) return;
     try {
-        var sel = viewAPI.get("selected_track");
-        var str = sel.toString();
-        var parts = str.split(",");
+        var view = new LiveAPI("live_set view");
+        var sel = view.get("selected_track");
+        var parts = sel.toString().split(",");
+        var t = 0;
         if (parts.length >= 2) {
-            var trackId = parseInt(parts[1]);
-            if (trackIdMap[trackId] !== undefined) return trackIdMap[trackId];
+            var tid = parseInt(parts[1]);
+            for (var i = 0; i < tracks.length; i++) {
+                if (tracks[i].id === tid) { t = i; break; }
+            }
         }
-    } catch(e) {}
-    return 0;
-}
 
-function getSelectedScene() {
-    try {
-        var sel = viewAPI.get("selected_scene");
-        var str = sel.toString();
-        var parts = str.split(",");
-        if (parts.length >= 2) {
-            var sceneId = parseInt(parts[1]);
-            if (sceneIdMap[sceneId] !== undefined) return sceneIdMap[sceneId];
+        var selS = view.get("selected_scene");
+        var partsS = selS.toString().split(",");
+        var s = 0;
+        if (partsS.length >= 2) {
+            var sid = parseInt(partsS[1]);
+            // scene IDs are sequential, just use the number directly
+            s = sid;
         }
-    } catch(e) {}
-    return 0;
-}
-
-function startPolling() {
-    if (pollTask) pollTask.cancel();
-    pollTask = new Task(pollCursor, this);
-    pollTask.interval = 100; // 10Hz — safer than 15Hz
-    pollTask.repeat();
-    post("Cursor polling started.\n");
-}
-
-function stopPolling() {
-    if (pollTask) {
-        pollTask.cancel();
-        pollTask = null;
-    }
-}
-
-function pollCursor() {
-    try {
-        var t = getSelectedTrack();
-        var s = getSelectedScene();
 
         if (t !== cursorTrack || s !== cursorScene) {
             cursorTrack = t;
             cursorScene = s;
-            var name = (tracks[t] && tracks[t].name) ? tracks[t].name : "Track " + t;
+            var name = tracks[t] ? tracks[t].name : "Track " + t;
             post(">> Cursor: Track " + t + " (" + name + ") Scene " + s + "\n");
-            outlet(0, "cursor", t, name, s);
 
             if (connected) {
-                var payload = JSON.stringify({
+                outlet(0, JSON.stringify({
                     type: "state", user: userId,
                     track: t, scene: s, ts: Date.now()
-                });
-                outlet(1, payload);
+                }));
             }
         }
-    } catch(e) {
-        post("pollCursor error: " + e + "\n");
-    }
+    } catch(e) {}
 }
 
-// Debug — call this to see raw API return values
-function dbg() {
-    post("\n=== DEBUG ===\n");
+function connect(ip) {
+    partnerHost = ip.toString();
+    connected = true;
+    post("Connected to " + partnerHost + "\n");
+}
+
+function disconnect() {
+    connected = false;
+    partnerHost = "";
+    post("Disconnected\n");
+}
+
+function incoming() {
+    var a = arrayfromargs(arguments);
+    var raw = a.join(" ");
     try {
-        var view = new LiveAPI("live_set view");
-        var selTrack = view.get("selected_track");
-        post("selected_track raw: " + selTrack + "\n");
-        post("selected_track type: " + typeof selTrack + "\n");
-        post("selected_track toString: " + selTrack.toString() + "\n");
+        var data = JSON.parse(raw);
+        if (data.user === userId) return;
 
-        var selScene = view.get("selected_scene");
-        post("selected_scene raw: " + selScene + "\n");
-
-        var ls = new LiveAPI("live_set");
-        var playing = ls.get("is_playing");
-        post("is_playing raw: " + playing + "\n");
-        post("is_playing type: " + typeof playing + "\n");
-
-        var bpm = ls.get("tempo");
-        post("tempo raw: " + bpm + "\n");
-
-        post("pollTask running: " + (pollTask ? pollTask.running : "null") + "\n");
-    } catch(e) {
-        post("DEBUG ERROR: " + e + "\n");
-    }
-    post("=============\n");
+        if (data.type === "set") {
+            var api = new LiveAPI("live_set " + data.path);
+            api.set(data.prop, data.value);
+            post("REMOTE " + data.user + ": set " + data.path + " " + data.prop + "=" + data.value + "\n");
+        }
+        else if (data.type === "launch") {
+            var api2 = new LiveAPI("live_set tracks " + data.track + " clip_slots " + data.scene);
+            api2.call("fire");
+            post("REMOTE " + data.user + ": launch T" + data.track + " S" + data.scene + "\n");
+        }
+        else if (data.type === "state") {
+            post("REMOTE " + data.user + ": cursor T" + data.track + " S" + data.scene + "\n");
+        }
+        else if (data.type === "transport") {
+            var ls = new LiveAPI("live_set");
+            if (data.action === "play") ls.call("start_playing");
+            else if (data.action === "stop") ls.call("stop_playing");
+            else if (data.action === "tempo") ls.set("tempo", data.value);
+            post("REMOTE " + data.user + ": " + data.action + "\n");
+        }
+    } catch(e) {}
 }
 
 function remote_set() {
@@ -151,27 +119,49 @@ function remote_set() {
         var api = new LiveAPI("live_set " + a[0]);
         api.set(a[1], a[2]);
         post("SET: " + a[0] + " " + a[1] + " = " + a[2] + "\n");
+        if (connected) outlet(0, JSON.stringify({ type: "set", user: userId, path: "" + a[0], prop: "" + a[1], value: a[2], ts: Date.now() }));
     } catch(e) { post("remote_set error: " + e + "\n"); }
 }
 
 function remote_launch() {
     var a = arrayfromargs(arguments);
-    if (a.length < 2) { post("Usage: remote_launch <track> <scene>\n"); return; }
+    if (a.length < 2) return;
     try {
-        var api = new LiveAPI("live_set tracks " + parseInt(a[0]) + " clip_slots " + parseInt(a[1]));
+        var t = parseInt(a[0]); var s = parseInt(a[1]);
+        var api = new LiveAPI("live_set tracks " + t + " clip_slots " + s);
         api.call("fire");
-        post("LAUNCH: Track " + a[0] + " Scene " + a[1] + "\n");
-    } catch(e) { post("remote_launch error: " + e + "\n"); }
+        post("LAUNCH: T" + t + " S" + s + "\n");
+        if (connected) outlet(0, JSON.stringify({ type: "launch", user: userId, track: t, scene: s, ts: Date.now() }));
+    } catch(e) { post("launch error: " + e + "\n"); }
 }
 
-function refresh() {
-    readTracks();
-    post("Refreshed: " + tracks.length + " tracks\n");
+function play() {
+    try { new LiveAPI("live_set").call("start_playing"); post("PLAY\n"); } catch(e) {}
 }
 
-function notifydeleted() {
-    stopPolling();
-    post("coLaB Hub destroyed.\n");
+function stop() {
+    try { new LiveAPI("live_set").call("stop_playing"); post("STOP\n"); } catch(e) {}
 }
 
-post("coLaB Hub v0.4.1 loaded.\n");
+function settempo() {
+    var a = arrayfromargs(arguments);
+    if (a.length < 1) return;
+    try { new LiveAPI("live_set").set("tempo", parseFloat(a[0])); post("TEMPO: " + a[0] + "\n"); } catch(e) {}
+}
+
+function refresh() { readTracks(); post("Refreshed.\n"); }
+
+function dbg() {
+    post("\n=== DEBUG ===\n");
+    post("ready: " + ready + "\n");
+    post("tracks: " + tracks.length + "\n");
+    post("cursor: T" + cursorTrack + " S" + cursorScene + "\n");
+    post("connected: " + connected + " partner: " + partnerHost + "\n");
+    post("=============\n");
+}
+
+function notifydeleted() { ready = false; post("coLaB Hub destroyed.\n"); }
+
+function save() { ready = false; }
+
+post("coLaB Hub v0.4.3 loaded.\n");
