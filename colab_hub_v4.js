@@ -85,6 +85,7 @@ function disconnect() {
 function incoming() {
     var a = arrayfromargs(arguments);
     var raw = a.join(" ");
+    post(">>> INCOMING RAW: " + raw + "\n");
     try {
         var data = JSON.parse(raw);
         if (data.user === userId) return;
@@ -150,6 +151,19 @@ function settempo() {
 }
 
 function refresh() { readTracks(); post("Refreshed.\n"); }
+
+// Simple network test — sends plain text, not JSON
+function testnet() {
+    post("Sending test message...\n");
+    outlet(0, "hello", "from", userId);
+}
+
+// Catch ANY message that arrives (debug)
+function anything() {
+    var name = messagename;
+    var a = arrayfromargs(arguments);
+    post("GOT MESSAGE: " + name + " " + a.join(" ") + "\n");
+}
 
 function dbg() {
     post("\n=== DEBUG ===\n");
