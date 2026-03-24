@@ -1,0 +1,12 @@
+{
+  "name": "colab-web-bridge",
+  "version": "1.0.0",
+  "description": "UDP→WebSocket bridge for coLaB live session view",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

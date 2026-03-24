@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>coLaB — Live Session</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0c0c0c;
+    --surface:   #141414;
+    --surface2:  #1c1c1c;
+    --surface3:  #242424;
+    --border:    #2c2c2c;
+    --text:      #e2e2e2;
+    --dim:       #5a5a5a;
+    --green:     #22c55e;
+    --red:       #ef4444;
+    --amber:     #f59e0b;
+    --cyan:      #06b6d4;
+    --purple:    #a78bfa;
+    --blue:      #3b82f6;
+    --header-h:  48px;
+    --panel-w:   calc(50% - 1px);
+  }
+
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--text); font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace; font-size: 12px; }
+
+  /* ── Header ─────────────────────────────────── */
+  .header {
+    height: var(--header-h);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 16px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .logo-icon {
+    width: 22px; height: 22px;
+    background: linear-gradient(135deg, var(--blue), var(--cyan));
+    border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #000;
+  }
+
+  .live-badge {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(34,197,94,0.12);
+    border: 1px solid rgba(34,197,94,0.25);
+    border-radius: 99px;
+    padding: 3px 10px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--green);
+  }
+  .live-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+
+  .header-spacer { flex: 1; }
+
+  .ws-status {
+    font-size: 10px;
+    color: var(--dim);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .ws-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--dim);
+    transition: background 0.3s;
+  }
+  .ws-dot.connected { background: var(--green); }
+
+  /* ── Main layout ─────────────────────────────── */
+  .main {
+    position: fixed;
+    top: var(--header-h); left: 0; right: 0; bottom: 0;
+    display: flex;
+    overflow: hidden;
+  }
+
+  .divider {
+    width: 1px;
+    background: var(--border);
+    flex-shrink: 0;
+  }
+
+  /* ── Panel ───────────────────────────────────── */
+  .panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .producer-name {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .panel.local .producer-name  { color: var(--purple); }
+  .panel.partner .producer-name { color: var(--cyan); }
+
+  .producer-id {
+    font-size: 10px;
+    color: var(--dim);
+    flex: 1;
+  }
+
+  .online-badge {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 99px;
+    border: 1px solid var(--border);
+    color: var(--dim);
+    transition: all 0.3s;
+  }
+  .online-badge.online {
+    color: var(--green);
+    border-color: rgba(34,197,94,0.3);
+    background: rgba(34,197,94,0.07);
+  }
+  .online-badge .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--dim);
+    transition: background 0.3s;
+  }
+  .online-badge.online .dot { background: var(--green); }
+
+  /* ── Transport ───────────────────────────────── */
+  .transport {
+    padding: 12px 16px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+
+  .play-btn {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--surface3);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+  .play-btn.playing {
+    background: rgba(34,197,94,0.15);
+    border-color: rgba(34,197,94,0.4);
+  }
+  .play-btn svg { width: 10px; height: 10px; fill: var(--dim); transition: fill 0.2s; }
+  .play-btn.playing svg { fill: var(--green); }
+
+  .tempo-block { display: flex; align-items: baseline; gap: 4px; }
+  .tempo-val {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.2s;
+  }
+  .tempo-unit { font-size: 10px; color: var(--dim); letter-spacing: 0.05em; }
+
+  .position {
+    font-size: 11px;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+    margin-left: auto;
+  }
+
+  /* ── Track list ──────────────────────────────── */
+  .tracks-header {
+    padding: 6px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 20px 1fr 60px 72px;
+    gap: 8px;
+    align-items: center;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .tracks-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .tracks-scroll::-webkit-scrollbar { width: 4px; }
+  .tracks-scroll::-webkit-scrollbar-track { background: transparent; }
+  .tracks-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Track row ───────────────────────────────── */
+  .track {
+    display: grid;
+    grid-template-columns: 20px 1fr 60px 72px;
+    gap: 8px;
+    align-items: center;
+    padding: 0 16px;
+    height: 36px;
+    border-bottom: 1px solid rgba(44,44,44,0.5);
+    transition: background 0.15s;
+    position: relative;
+  }
+  .track:hover { background: var(--surface2); }
+
+  /* Cursor bar — left edge highlight */
+  .track::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    background: transparent;
+    transition: background 0.2s;
+  }
+  .track.cursor-local::before  { background: var(--purple); }
+  .track.cursor-partner::before { background: var(--cyan); }
+  .track.cursor-local  { background: rgba(167,139,250,0.06); }
+  .track.cursor-partner { background: rgba(6,182,212,0.06); }
+
+  /* Flash on change */
+  .track.flash {
+    animation: flash-row 0.4s ease-out;
+  }
+  @keyframes flash-row {
+    0%   { background: rgba(59,130,246,0.2); }
+    100% { background: transparent; }
+  }
+
+  /* Track color swatch */
+  .track-color {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+    background: var(--dim);
+    flex-shrink: 0;
+  }
+
+  /* Track name */
+  .track-name {
+    font-size: 11px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: color 0.2s;
+  }
+  .track.muted .track-name { color: var(--dim); }
+
+  /* Volume bar */
+  .vol-bar {
+    height: 3px;
+    background: var(--surface3);
+    border-radius: 2px;
+    overflow: hidden;
+    align-self: center;
+  }
+  .vol-fill {
+    height: 100%;
+    background: var(--blue);
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+  .track.muted .vol-fill { background: var(--dim); }
+
+  /* M / S / A buttons */
+  .track-btns {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .tbtn {
+    width: 20px; height: 20px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--surface3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0;
+    color: var(--dim);
+    transition: all 0.15s;
+    cursor: default;
+  }
+  .tbtn.mute-on  { background: rgba(239,68,68,0.2);  border-color: rgba(239,68,68,0.5);  color: var(--red);   }
+  .tbtn.solo-on  { background: rgba(245,158,11,0.2); border-color: rgba(245,158,11,0.5); color: var(--amber); }
+  .tbtn.arm-on   { background: rgba(239,68,68,0.2);  border-color: rgba(239,68,68,0.5);  color: var(--red);   }
+
+  /* ── Empty / waiting states ──────────────────── */
+  .waiting {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--dim);
+    font-size: 11px;
+    padding: 40px;
+    text-align: center;
+  }
+  .waiting-icon { font-size: 28px; opacity: 0.3; }
+  .waiting-title { font-size: 12px; color: var(--text); font-weight: 600; }
+  .waiting-sub   { font-size: 10px; color: var(--dim); line-height: 1.6; }
+
+  /* ── Animations ──────────────────────────────── */
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.3; }
+  }
+
+  /* ── No tracks placeholder ───────────────────── */
+  .no-tracks {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--dim);
+    font-size: 10px;
+    line-height: 1.8;
+  }
+
+  /* ── Reconnect banner ────────────────────────── */
+  .banner {
+    position: fixed;
+    bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 11px;
+    color: var(--amber);
+    display: none;
+    gap: 8px;
+    align-items: center;
+    z-index: 200;
+    animation: slide-up 0.2s ease-out;
+  }
+  .banner.show { display: flex; }
+  @keyframes slide-up {
+    from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────── -->
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">C</div>
+    coLaB
+  </div>
+  <div class="live-badge">
+    <span class="live-dot"></span>
+    LIVE
+  </div>
+  <div class="header-spacer"></div>
+  <div class="ws-status">
+    <div class="ws-dot" id="wsDot"></div>
+    <span id="wsLabel">Connecting…</span>
+  </div>
+</header>
+
+<!-- ── Main ───────────────────────────────────────────────────── -->
+<div class="main">
+
+  <!-- Local panel -->
+  <div class="panel local" id="localPanel">
+    <div class="panel-header">
+      <span class="producer-name">You</span>
+      <span class="producer-id" id="localId">local</span>
+      <div class="online-badge" id="localBadge">
+        <span class="dot"></span>
+        <span>Offline</span>
+      </div>
+    </div>
+    <div class="transport" id="localTransport">
+      <div class="play-btn" id="localPlayBtn">
+        <svg viewBox="0 0 10 10"><polygon points="2,1 9,5 2,9"/></svg>
+      </div>
+      <div class="tempo-block">
+        <span class="tempo-val" id="localTempo">–</span>
+        <span class="tempo-unit">BPM</span>
+      </div>
+      <span class="position" id="localPos">0:00</span>
+    </div>
+    <div class="tracks-header">
+      <span></span>
+      <span>Track</span>
+      <span>Vol</span>
+      <span>M&nbsp;&nbsp;S&nbsp;&nbsp;A</span>
+    </div>
+    <div class="tracks-scroll" id="localTracks">
+      <div class="waiting">
+        <div class="waiting-icon">⚡</div>
+        <div class="waiting-title">Waiting for Ableton</div>
+        <div class="waiting-sub">Start AbletonOSC in Ableton preferences<br>then run <code>ableton session connect</code></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Partner panel -->
+  <div class="panel partner" id="partnerPanel">
+    <div class="panel-header">
+      <span class="producer-name">Partner</span>
+      <span class="producer-id" id="partnerId">–</span>
+      <div class="online-badge" id="partnerBadge">
+        <span class="dot"></span>
+        <span>Waiting</span>
+      </div>
+    </div>
+    <div class="transport" id="partnerTransport">
+      <div class="play-btn" id="partnerPlayBtn">
+        <svg viewBox="0 0 10 10"><polygon points="2,1 9,5 2,9"/></svg>
+      </div>
+      <div class="tempo-block">
+        <span class="tempo-val" id="partnerTempo">–</span>
+        <span class="tempo-unit">BPM</span>
+      </div>
+      <span class="position" id="partnerPos">0:00</span>
+    </div>
+    <div class="tracks-header">
+      <span></span>
+      <span>Track</span>
+      <span>Vol</span>
+      <span>M&nbsp;&nbsp;S&nbsp;&nbsp;A</span>
+    </div>
+    <div class="tracks-scroll" id="partnerTracks">
+      <div class="waiting">
+        <div class="waiting-icon">🔗</div>
+        <div class="waiting-title">No partner connected</div>
+        <div class="waiting-sub">Partner diffs arrive on UDP :8001<br>Make sure colab_hub_v5 is running<br>and <code>connect [partner-ip]</code> is set</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reconnect banner -->
+<div class="banner" id="banner">⚡ WebSocket disconnected — reconnecting…</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let state = {
+  local:   { tracks: [], transport: { playing: false, tempo: 120, position: 0 }, cursor: { track: -1 }, online: false },
+  partner: { tracks: [], transport: { playing: false, tempo: 120, position: 0 }, cursor: { track: -1 }, online: false, userId: null, label: 'Partner' },
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fmtBpm(v)  { return isFinite(v) ? parseFloat(v).toFixed(2) : '–'; }
+function fmtPos(v)  {
+  if (!isFinite(v) || v < 0) return '0:00';
+  const b = Math.floor(v), s = Math.floor((v % 1) * 60);
+  return `${b}:${String(s).padStart(2,'0')}`;
+}
+function liveColor(colorInt) {
+  // Ableton color palette approximation
+  const palette = [
+    '#ff5858','#ff8c00','#ffd700','#9dc70e','#22c55e',
+    '#00bcd4','#3b82f6','#8b5cf6','#ec4899','#94a3b8',
+  ];
+  return palette[colorInt % palette.length] || '#5a5a5a';
+}
+
+function flashRow(rowEl) {
+  rowEl.classList.remove('flash');
+  void rowEl.offsetWidth; // reflow
+  rowEl.classList.add('flash');
+  rowEl.addEventListener('animationend', () => rowEl.classList.remove('flash'), { once: true });
+}
+
+// ── Transport render ──────────────────────────────────────────────────────────
+function renderTransport(side, transport) {
+  const playBtn = document.getElementById(`${side}PlayBtn`);
+  const tempoEl = document.getElementById(`${side}Tempo`);
+  const posEl   = document.getElementById(`${side}Pos`);
+
+  playBtn.classList.toggle('playing', !!transport.playing);
+  tempoEl.textContent = fmtBpm(transport.tempo);
+  posEl.textContent   = fmtPos(transport.position);
+}
+
+// ── Badge render ──────────────────────────────────────────────────────────────
+function renderBadge(side, online, label) {
+  const badge = document.getElementById(`${side}Badge`);
+  badge.classList.toggle('online', online);
+  badge.querySelector('span:last-child').textContent = online ? 'Online' : (side === 'partner' ? 'Waiting' : 'Offline');
+  if (side === 'partner') {
+    document.getElementById('partnerId').textContent = label || '–';
+  }
+}
+
+// ── Track list render ─────────────────────────────────────────────────────────
+function renderTracks(side, tracks, cursor) {
+  const container = document.getElementById(`${side}Tracks`);
+  if (!tracks || tracks.length === 0) {
+    container.innerHTML = `<div class="waiting">
+      <div class="waiting-icon">${side === 'local' ? '⚡' : '🔗'}</div>
+      <div class="waiting-title">${side === 'local' ? 'Waiting for Ableton' : 'No partner connected'}</div>
+      <div class="waiting-sub">${side === 'local'
+        ? 'Start AbletonOSC in Ableton preferences<br>then run <code>ableton session connect</code>'
+        : 'Partner diffs arrive on UDP :8001<br>Make sure colab_hub_v5 is running<br>and <code>connect [partner-ip]</code> is set'
+      }</div>
+    </div>`;
+    return;
+  }
+
+  // Preserve existing rows if same track count (update in place)
+  const existing = container.querySelectorAll('.track');
+  if (existing.length === tracks.length) {
+    tracks.forEach((t, i) => updateTrackRow(existing[i], t, cursor));
+    return;
+  }
+
+  // Full re-render
+  container.innerHTML = '';
+  tracks.forEach((t) => {
+    const row = buildTrackRow(t);
+    updateTrackRow(row, t, cursor);
+    container.appendChild(row);
+  });
+}
+
+function buildTrackRow(t) {
+  const row = document.createElement('div');
+  row.className = 'track';
+  row.dataset.idx = t.index;
+  row.innerHTML = `
+    <div class="track-color"></div>
+    <div class="track-name"></div>
+    <div class="vol-bar"><div class="vol-fill"></div></div>
+    <div class="track-btns">
+      <div class="tbtn mute-btn">M</div>
+      <div class="tbtn solo-btn">S</div>
+      <div class="tbtn arm-btn">A</div>
+    </div>`;
+  return row;
+}
+
+function updateTrackRow(row, t, cursor) {
+  row.querySelector('.track-color').style.background = liveColor(t.color || 0);
+  row.querySelector('.track-name').textContent = t.name || `Track ${t.index + 1}`;
+  row.querySelector('.vol-fill').style.width   = `${Math.round((t.volume ?? 0.85) * 100)}%`;
+  row.querySelector('.mute-btn').classList.toggle('mute-on', !!t.mute);
+  row.querySelector('.solo-btn').classList.toggle('solo-on', !!t.solo);
+  row.querySelector('.arm-btn').classList.toggle('arm-on',  !!t.arm);
+  row.classList.toggle('muted', !!t.mute);
+
+  const isCursorLocal   = cursor && cursor.track === t.index;
+  row.classList.toggle('cursor-local',   isCursorLocal);
+  row.classList.toggle('cursor-partner', isCursorLocal);
+}
+
+// ── Full state render ─────────────────────────────────────────────────────────
+function renderAll() {
+  for (const side of ['local', 'partner']) {
+    const p = state[side];
+    renderTransport(side, p.transport);
+    renderTracks(side, p.tracks, p.cursor);
+    renderBadge(side, p.online, p.label || (side === 'partner' ? p.userId : null));
+  }
+}
+
+// ── Apply partner diff (in-place, with flash) ─────────────────────────────────
+function applyDiff(diffs) {
+  if (!diffs) return;
+  const container = document.getElementById('partnerTracks');
+  for (const d of diffs) {
+    if (d.path === 'transport') {
+      if (d.prop === 'playing') state.partner.transport.playing = !!d.value;
+      if (d.prop === 'tempo')   state.partner.transport.tempo   = parseFloat(d.value);
+      renderTransport('partner', state.partner.transport);
+    } else {
+      const m = d.path.match(/^tracks\s+(\d+)$/);
+      if (!m) continue;
+      const idx = parseInt(m[1]);
+      // Grow state tracks if needed
+      while (state.partner.tracks.length <= idx) {
+        const n = state.partner.tracks.length;
+        state.partner.tracks.push({ index: n, name: `Track ${n+1}`, mute: false, solo: false, arm: false, volume: 0.85, pan: 0 });
+      }
+      state.partner.tracks[idx][d.prop] =
+        (d.prop === 'mute' || d.prop === 'solo' || d.prop === 'arm') ? !!d.value : d.value;
+
+      // Flash the row
+      const row = container.querySelector(`.track[data-idx="${idx}"]`);
+      if (row) {
+        updateTrackRow(row, state.partner.tracks[idx], state.partner.cursor);
+        flashRow(row);
+      } else {
+        // New track appeared — full re-render
+        renderTracks('partner', state.partner.tracks, state.partner.cursor);
+      }
+    }
+  }
+}
+
+// ── Cursor update (in-place) ──────────────────────────────────────────────────
+function updateCursor(source, trackIdx) {
+  const side = source === 'partner' ? 'partner' : 'local';
+  state[side].cursor.track = trackIdx;
+
+  const container = document.getElementById(`${side}Tracks`);
+  container.querySelectorAll('.track').forEach((row) => {
+    const idx = parseInt(row.dataset.idx);
+    const isMatch = idx === trackIdx;
+    if (side === 'partner') {
+      row.classList.toggle('cursor-partner', isMatch);
+      row.style.background = isMatch ? 'rgba(6,182,212,0.06)' : '';
+    } else {
+      row.classList.toggle('cursor-local', isMatch);
+      row.style.background = isMatch ? 'rgba(167,139,250,0.06)' : '';
+    }
+  });
+}
+
+// ── WebSocket ──────────────────────────────────────────────────────────────────
+const wsDot    = document.getElementById('wsDot');
+const wsLabel  = document.getElementById('wsLabel');
+const banner   = document.getElementById('banner');
+let ws, reconnectTimer;
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}`);
+
+  ws.onopen = () => {
+    wsDot.classList.add('connected');
+    wsLabel.textContent = 'Connected';
+    banner.classList.remove('show');
+    clearTimeout(reconnectTimer);
+  };
+
+  ws.onmessage = ({ data }) => {
+    let msg;
+    try { msg = JSON.parse(data); } catch { return; }
+
+    if (msg.type === 'state') {
+      state.local   = { ...state.local,   ...msg.producers.local   };
+      state.partner = { ...state.partner, ...msg.producers.partner };
+      renderAll();
+    } else if (msg.type === 'diff') {
+      applyDiff(msg.diffs);
+    } else if (msg.type === 'cursor') {
+      updateCursor(msg.source, msg.track);
+    }
+  };
+
+  ws.onclose = () => {
+    wsDot.classList.remove('connected');
+    wsLabel.textContent = 'Disconnected';
+    banner.classList.add('show');
+    reconnectTimer = setTimeout(connect, 2500);
+  };
+
+  ws.onerror = () => ws.close();
+}
+
+connect();
+</script>
+</body>
+</html>
