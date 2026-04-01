@@ -197,6 +197,156 @@ LiveBridge.prototype.isSuppressingEcho = function() {
   return this._suppressEcho;
 };
 
+// --- Project Path ---
+// Song.file_path returns OS-native path to current .als (empty if unsaved)
+
+LiveBridge.prototype.getProjectPath = function() {
+  var liveSet = new LiveAPI('live_set');
+  var filePath = liveSet.get('file_path');
+  if (filePath && filePath.toString() !== '') {
+    // file_path points to the .als file — we want the project folder
+    var alsPath = filePath.toString();
+    // Strip filename to get project directory
+    var sep = alsPath.indexOf('/') >= 0 ? '/' : '\\';
+    var parts = alsPath.split(sep);
+    parts.pop(); // remove .als filename
+    return parts.join(sep);
+  }
+  return null;
+};
+
+LiveBridge.prototype.getAlsPath = function() {
+  var liveSet = new LiveAPI('live_set');
+  var filePath = liveSet.get('file_path');
+  return (filePath && filePath.toString() !== '') ? filePath.toString() : null;
+};
+
+// --- Audio Sample Dependencies ---
+// Scans all audio clips and Simpler/Sampler devices for file_path references
+
+LiveBridge.prototype.getAudioFileDependencies = function() {
+  var deps = [];
+  var seen = {};
+  var liveSet = new LiveAPI('live_set');
+  var trackCount = liveSet.getcount('tracks');
+
+  for (var t = 0; t < trackCount; t++) {
+    var trackName = new LiveAPI('live_set tracks ' + t).get('name').toString();
+
+    // Check arrangement clips (Live 11+)
+    try {
+      var track = new LiveAPI('live_set tracks ' + t);
+      var arrClipCount = track.getcount('arrangement_clips');
+      for (var ac = 0; ac < arrClipCount; ac++) {
+        var arrClip = new LiveAPI('live_set tracks ' + t + ' arrangement_clips ' + ac);
+        var isAudio = parseInt(arrClip.get('is_audio_clip'));
+        if (isAudio === 1) {
+          var fp = arrClip.get('file_path').toString();
+          if (fp && !seen[fp]) {
+            seen[fp] = true;
+            deps.push({ path: fp, source: 'arrangement_clip', track: trackName, trackIndex: t });
+          }
+        }
+      }
+    } catch (e) { /* arrangement_clips not available pre-Live 11 */ }
+
+    // Check session clip slots
+    var slotCount = new LiveAPI('live_set tracks ' + t).getcount('clip_slots');
+    for (var s = 0; s < slotCount; s++) {
+      var slot = new LiveAPI('live_set tracks ' + t + ' clip_slots ' + s);
+      if (parseInt(slot.get('has_clip')) !== 1) continue;
+
+      var clip = new LiveAPI('live_set tracks ' + t + ' clip_slots ' + s + ' clip');
+      var isAudioClip = parseInt(clip.get('is_audio_clip'));
+      if (isAudioClip === 1) {
+        var clipPath = clip.get('file_path').toString();
+        if (clipPath && !seen[clipPath]) {
+          seen[clipPath] = true;
+          deps.push({ path: clipPath, source: 'session_clip', track: trackName, trackIndex: t, slot: s });
+        }
+      }
+    }
+
+    // Check Simpler/Sampler devices for Sample.file_path
+    var deviceCount = new LiveAPI('live_set tracks ' + t).getcount('devices');
+    for (var d = 0; d < deviceCount; d++) {
+      var device = new LiveAPI('live_set tracks ' + t + ' devices ' + d);
+      var className = device.get('class_name').toString();
+
+      if (className === 'OriginalSimpler' || className === 'MultiSampler') {
+        // Simpler: access sample child
+        try {
+          var sample = new LiveAPI('live_set tracks ' + t + ' devices ' + d + ' sample');
+          var samplePath = sample.get('file_path').toString();
+          if (samplePath && !seen[samplePath]) {
+            seen[samplePath] = true;
+            deps.push({ path: samplePath, source: 'simpler_sample', track: trackName, trackIndex: t, device: className });
+          }
+        } catch (e) { /* sample not accessible */ }
+      }
+    }
+  }
+
+  return deps;
+};
+
+// --- Plugin Audit (via LOM) ---
+// Returns all third-party plugins with preset info
+
+LiveBridge.prototype.getPluginDevices = function() {
+  var plugins = [];
+  var liveSet = new LiveAPI('live_set');
+  var trackCount = liveSet.getcount('tracks');
+
+  for (var t = 0; t < trackCount; t++) {
+    var trackName = new LiveAPI('live_set tracks ' + t).get('name').toString();
+    var deviceCount = new LiveAPI('live_set tracks ' + t).getcount('devices');
+
+    for (var d = 0; d < deviceCount; d++) {
+      var device = new LiveAPI('live_set tracks ' + t + ' devices ' + d);
+      var className = device.get('class_name').toString();
+
+      if (className === 'PluginDevice' || className === 'AuPluginDevice' || className === 'Vst3PluginDevice') {
+        var deviceName = device.get('name').toString();
+        var isActive = parseInt(device.get('is_active'));
+        var deviceType = parseInt(device.get('type')); // 0=undefined, 1=instrument, 2=audio_effect, 4=midi_effect
+
+        // Get preset info if available
+        var presetIndex = -1;
+        try { presetIndex = parseInt(device.get('selected_preset_index')); } catch (e) {}
+
+        plugins.push({
+          name: deviceName,
+          className: className,
+          type: deviceType,
+          isActive: isActive === 1,
+          presetIndex: presetIndex,
+          track: trackName,
+          trackIndex: t,
+          deviceIndex: d
+        });
+      }
+    }
+  }
+
+  return plugins;
+};
+
+// --- Notes (Modern API) ---
+// Uses get_all_notes_extended (Live 11+) for structured note access
+
+LiveBridge.prototype.getClipNotesExtended = function(trackIdx, slotIdx) {
+  var clip = new LiveAPI('live_set tracks ' + trackIdx + ' clip_slots ' + slotIdx + ' clip');
+  try {
+    // get_all_notes_extended returns dict with note_id, pitch, start_time, duration, velocity, etc.
+    var result = clip.call('get_all_notes_extended');
+    return result;
+  } catch (e) {
+    // Fall back to legacy get_notes for older Live versions
+    return this._getClipNotes(trackIdx, slotIdx);
+  }
+};
+
 // Export
 if (typeof module !== 'undefined') {
   module.exports = LiveBridge;

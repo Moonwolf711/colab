@@ -1,0 +1,50 @@
+{
+  "name": "@colab/als-differ",
+  "version": "1.0.0",
+  "description": "Semantic diff engine for Ableton Live Set (.als) files. Strips non-musical noise, diffs by structural identity, produces human-readable change reports.",
+  "main": "als-differ.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "author": {
+    "name": "Tyler Yianacopolus",
+    "email": "123460854+Moonwolf711@users.noreply.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Moonwolf711/colab",
+    "directory": "js/hub"
+  },
+  "keywords": [
+    "ableton",
+    "als",
+    "diff",
+    "live-set",
+    "semantic-diff",
+    "music-production",
+    "collaboration",
+    "version-control"
+  ],
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "sax": "^1.4.1"
+  },
+  "files": [
+    "als-differ.js"
+  ],
+  "ip": {
+    "classification": "proprietary",
+    "lineage": "original-work",
+    "priorArt": "none — first semantic .als differ in existence",
+    "created": "2026-03-31",
+    "coreAlgorithms": [
+      "SAX-based XML parse with junk field stripping during stream",
+      "Structural identity matching via @Id attributes",
+      "60+ junk element classifications from .als XML schema analysis",
+      "Hierarchical diff: tracks → devices → clips → notes",
+      "MIDI note diff by NoteId with velocity/duration/probability tracking",
+      "Semantic commit message generation from diff summaries"
+    ]
+  }
+}

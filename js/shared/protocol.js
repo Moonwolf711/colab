@@ -144,3 +144,78 @@ exports.parseDiscoveryBeacon = function(data) {
     info: JSON.parse(json)
   };
 };
+
+// --- Asset Manifest Packet ---
+// [header: 5 bytes] [N bytes: JSON manifest {files, plugins}]
+
+exports.buildAssetManifest = function(seq, manifest) {
+  var json = JSON.stringify(manifest);
+  var jsonBytes = new TextEncoder().encode(json);
+  var buf = new ArrayBuffer(5 + jsonBytes.length);
+  var arr = new Uint8Array(buf);
+  var view = new DataView(buf);
+
+  view.setUint8(0, C.PKT.ASSET_MANIFEST);
+  view.setUint32(1, seq, true);
+  arr.set(jsonBytes, 5);
+
+  return arr;
+};
+
+exports.parseAssetManifest = function(data) {
+  var json = new TextDecoder().decode(new Uint8Array(data.buffer || data, 5));
+  return {
+    seq: new DataView(data.buffer || data).getUint32(1, true),
+    manifest: JSON.parse(json)
+  };
+};
+
+// --- Asset Request Packet ---
+// [header: 5 bytes] [N bytes: JSON {paths: [relativePath, ...]}]
+
+exports.buildAssetRequest = function(seq, paths) {
+  var json = JSON.stringify({ paths: paths });
+  var jsonBytes = new TextEncoder().encode(json);
+  var buf = new ArrayBuffer(5 + jsonBytes.length);
+  var arr = new Uint8Array(buf);
+  var view = new DataView(buf);
+
+  view.setUint8(0, C.PKT.ASSET_REQUEST);
+  view.setUint32(1, seq, true);
+  arr.set(jsonBytes, 5);
+
+  return arr;
+};
+
+exports.parseAssetRequest = function(data) {
+  var json = new TextDecoder().decode(new Uint8Array(data.buffer || data, 5));
+  return {
+    seq: new DataView(data.buffer || data).getUint32(1, true),
+    request: JSON.parse(json)
+  };
+};
+
+// --- Missing File Alert Packet ---
+// [header: 5 bytes] [N bytes: JSON {missing: [{path, reason}], plugins: [{name, reason}]}]
+
+exports.buildMissingAlert = function(seq, missingFiles, missingPlugins) {
+  var json = JSON.stringify({ missing: missingFiles, plugins: missingPlugins });
+  var jsonBytes = new TextEncoder().encode(json);
+  var buf = new ArrayBuffer(5 + jsonBytes.length);
+  var arr = new Uint8Array(buf);
+  var view = new DataView(buf);
+
+  view.setUint8(0, C.PKT.ASSET_MISSING);
+  view.setUint32(1, seq, true);
+  arr.set(jsonBytes, 5);
+
+  return arr;
+};
+
+exports.parseMissingAlert = function(data) {
+  var json = new TextDecoder().decode(new Uint8Array(data.buffer || data, 5));
+  return {
+    seq: new DataView(data.buffer || data).getUint32(1, true),
+    alert: JSON.parse(json)
+  };
+};
