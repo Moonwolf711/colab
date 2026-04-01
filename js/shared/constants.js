@@ -5,6 +5,7 @@ exports.MULTICAST_ADDR = '224.0.0.42';
 exports.DISCOVERY_PORT = 4242;
 exports.STATE_PORT = 4243;
 exports.AUDIO_PORT_BASE = 4244;
+exports.DATA_PORT = 4253;        // LAN Transport reliable channel
 
 // Packet types
 exports.PKT = {
@@ -18,7 +19,20 @@ exports.PKT = {
   HEARTBEAT_ACK: 0x41,
   CONNECT_REQUEST: 0x50,
   CONNECT_ACCEPT: 0x51,
-  DISCONNECT: 0x52
+  DISCONNECT: 0x52,
+  ASSET_MANIFEST: 0x60,
+  ASSET_REQUEST: 0x61,
+  ASSET_TRANSFER: 0x62,
+  ASSET_MISSING: 0x63,
+  PLUGIN_AUDIT: 0x64,
+
+  // LAN Transport control packets
+  ACK: 0xA0,
+  NACK: 0xA1,
+  RELIABLE_WRAP: 0xA2,
+  PING: 0xA3,
+  PONG: 0xA4,
+  FLOW_CTRL: 0xA5
 };
 
 // Audio
@@ -42,3 +56,9 @@ exports.RECONNECT_MAX_ATTEMPTS = 10;
 // Limits
 exports.MAX_SHARED_TRACKS = 16;
 exports.MAX_SYNCED_CLIPS = 64;
+exports.MAX_TRANSFER_FILE_SIZE = 50 * 1024 * 1024; // 50MB per file transfer
+exports.TRANSFER_CHUNK_SIZE = 32768; // 32KB chunks for UDP file transfer
+
+// File types for asset scanning
+exports.AUDIO_EXTENSIONS = ['.wav', '.aif', '.aiff', '.mp3', '.flac', '.ogg', '.m4a', '.wma'];
+exports.PRESET_EXTENSIONS = ['.adv', '.adg', '.agr', '.als', '.fxp', '.fxb', '.nmsv', '.vstpreset'];
