@@ -5,7 +5,8 @@ exports.MULTICAST_ADDR = '224.0.0.42';
 exports.DISCOVERY_PORT = 4242;
 exports.STATE_PORT = 4243;
 exports.AUDIO_PORT_BASE = 4244;
-exports.DATA_PORT = 4253;        // LAN Transport reliable channel
+exports.DATA_PORT = 4253;        // LAN Transport reliable channel (UDP)
+exports.TCP_PORT = 4260;         // TCP/IP stack primary port
 
 // Packet types
 exports.PKT = {
