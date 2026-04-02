@@ -285,17 +285,17 @@ function sendToM4L(msg) {
 function wireEngineToM4L() {
   if (!engine) return;
 
-  // Peer cursor → forward to local M4L as "incoming cursor" message
+  // Peer cursor → forward to local M4L in the exact format incoming() expects
+  // M4L incoming() checks: data.type === "cursor" && data.track
   engine.on('cursor', (data) => {
     if (data && data.trackIdx !== undefined) {
       sendToM4L({
-        type: 'incoming',
-        subtype: 'cursor',
-        user: data.userId || 'partner',
+        type: 'cursor',
+        user: 'partner',
         track: data.trackIdx,
-        scene: data.sceneIdx || 0
+        scene: data.sceneIdx || 0,
+        ts: Date.now()
       });
-      // Update web UI
       producers.partner.cursor.track = data.trackIdx;
       producers.partner.online = true;
       producers.partner.lastSeen = Date.now();
@@ -304,40 +304,32 @@ function wireEngineToM4L() {
   });
 
   // Peer state (params/transport) → forward to local M4L
+  // M4L incoming() checks: data.type === "sync" && data.diffs[]
+  // Each diff: { path: "tracks 0" | "transport", prop: "volume"|"mute"|..., value: ... }
   engine.on('state', (data) => {
     if (!Buffer.isBuffer(data) && !(data instanceof Uint8Array)) return;
-    // Try to parse as JSON payload (our custom format)
     try {
       const payload = data.slice(5).toString('utf8');
       const msg = JSON.parse(payload);
 
       if (msg.type === 'param') {
-        sendToM4L({
-          type: 'incoming',
-          subtype: 'sync',
-          user: 'partner',
-          diffs: [{ path: 'tracks ' + msg.track, prop: msg.param, value: msg.value }]
-        });
-        // Update web UI
+        const diff = { path: 'tracks ' + msg.track, prop: msg.param, value: msg.value };
+        sendToM4L({ type: 'sync', user: 'partner', diffs: [diff], ts: Date.now() });
         if (producers.partner.tracks[msg.track]) {
           producers.partner.tracks[msg.track][msg.param] = msg.value;
         }
-        broadcast({ type: 'diff', source: 'partner', diffs: [{ path: 'tracks ' + msg.track, prop: msg.param, value: msg.value }] });
+        broadcast({ type: 'diff', source: 'partner', diffs: [diff] });
       }
 
       if (msg.type === 'transport') {
-        sendToM4L({
-          type: 'incoming',
-          subtype: 'sync',
-          user: 'partner',
-          diffs: [
-            msg.playing !== undefined ? { path: 'transport', prop: 'playing', value: msg.playing } : null,
-            msg.tempo !== undefined ? { path: 'transport', prop: 'tempo', value: msg.tempo } : null
-          ].filter(Boolean)
-        });
+        const diffs = [
+          msg.playing !== undefined ? { path: 'transport', prop: 'playing', value: msg.playing } : null,
+          msg.tempo !== undefined ? { path: 'transport', prop: 'tempo', value: msg.tempo } : null
+        ].filter(Boolean);
+        sendToM4L({ type: 'sync', user: 'partner', diffs, ts: Date.now() });
         if (msg.playing !== undefined) producers.partner.transport.playing = msg.playing;
         if (msg.tempo !== undefined) producers.partner.transport.tempo = msg.tempo;
-        broadcast({ type: 'diff', source: 'partner', diffs: [{ path: 'transport', prop: msg.playing !== undefined ? 'playing' : 'tempo', value: msg.playing !== undefined ? msg.playing : msg.tempo }] });
+        broadcast({ type: 'diff', source: 'partner', diffs });
       }
 
       if (msg.type === 'als_save') {
@@ -364,14 +356,16 @@ function wireEngineToM4L() {
     producers.partner.lastSeen = Date.now();
     producers.partner.label = `Partner · ${info.address || engine.peerIp}`;
     broadcast({ type: 'state', producers });
-    sendToM4L({ type: 'incoming', subtype: 'connected', partner: info.address || engine.peerIp });
+    // Tell M4L device the peer IP so it can set connected=true
+    // This simulates what clicking "connect 192.168.0.83" does in the Max patcher
+    sendToM4L({ type: 'engine_connect', partner: info.address || engine.peerIp });
     console.log(`[bridge] Peer connected via engine: ${info.address || engine.peerIp}`);
   });
 
   engine.on('disconnect', (reason) => {
     producers.partner.online = false;
     broadcast({ type: 'state', producers });
-    sendToM4L({ type: 'incoming', subtype: 'disconnected', reason });
+    sendToM4L({ type: 'engine_disconnect', reason });
     console.log(`[bridge] Peer disconnected: ${reason}`);
   });
 }
