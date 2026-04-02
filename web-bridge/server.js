@@ -237,9 +237,144 @@ udp.on('message', (buf, rinfo) => {
   if (type === 'asset_missing') {
     broadcast({ type: 'asset_missing', missing: data.missing, plugins: data.plugins });
   }
+
+  // ─── BRIDGE: Forward M4L messages to peer via engine ─────────────────────
+  if (engine && engine._connected) {
+    // Forward cursor updates via UDP (fast path)
+    if (type === 'cursor') {
+      engine.sendCursor(
+        parseInt(data.track ?? 0),
+        parseInt(data.scene ?? 0),
+        true,
+        data.user || 'local'
+      );
+    }
+
+    // Forward parameter diffs via UDP (fast path)
+    if (type === 'sync' && Array.isArray(diffs)) {
+      for (const d of diffs) {
+        if (d.path === 'transport') {
+          engine.sendTransport(
+            d.prop === 'playing' ? !!d.value : undefined,
+            d.prop === 'tempo' ? parseFloat(d.value) : undefined
+          );
+        } else {
+          const m = d.path.match(/^tracks\s+(\d+)$/);
+          if (m) {
+            engine.sendParam(parseInt(m[1]), d.prop, d.value);
+          }
+        }
+      }
+    }
+  }
 });
 
 udp.bind(UDP_PORT, '0.0.0.0', () => console.log(`[bridge] UDP :${UDP_PORT} ready (all diffs from M4L outlet 1)`));
+
+// ─── BRIDGE: Forward peer engine data → local M4L device via UDP 8001 ────────
+
+const M4L_PORT = 8001;
+const m4lSender = dgram.createSocket('udp4');
+
+function sendToM4L(msg) {
+  const buf = Buffer.from(JSON.stringify(msg));
+  m4lSender.send(buf, 0, buf.length, M4L_PORT, '127.0.0.1');
+}
+
+// Wire engine events from peer → M4L device
+function wireEngineToM4L() {
+  if (!engine) return;
+
+  // Peer cursor → forward to local M4L as "incoming cursor" message
+  engine.on('cursor', (data) => {
+    if (data && data.trackIdx !== undefined) {
+      sendToM4L({
+        type: 'incoming',
+        subtype: 'cursor',
+        user: data.userId || 'partner',
+        track: data.trackIdx,
+        scene: data.sceneIdx || 0
+      });
+      // Update web UI
+      producers.partner.cursor.track = data.trackIdx;
+      producers.partner.online = true;
+      producers.partner.lastSeen = Date.now();
+      broadcast({ type: 'cursor', source: 'partner', track: data.trackIdx, scene: data.sceneIdx });
+    }
+  });
+
+  // Peer state (params/transport) → forward to local M4L
+  engine.on('state', (data) => {
+    if (!Buffer.isBuffer(data) && !(data instanceof Uint8Array)) return;
+    // Try to parse as JSON payload (our custom format)
+    try {
+      const payload = data.slice(5).toString('utf8');
+      const msg = JSON.parse(payload);
+
+      if (msg.type === 'param') {
+        sendToM4L({
+          type: 'incoming',
+          subtype: 'sync',
+          user: 'partner',
+          diffs: [{ path: 'tracks ' + msg.track, prop: msg.param, value: msg.value }]
+        });
+        // Update web UI
+        if (producers.partner.tracks[msg.track]) {
+          producers.partner.tracks[msg.track][msg.param] = msg.value;
+        }
+        broadcast({ type: 'diff', source: 'partner', diffs: [{ path: 'tracks ' + msg.track, prop: msg.param, value: msg.value }] });
+      }
+
+      if (msg.type === 'transport') {
+        sendToM4L({
+          type: 'incoming',
+          subtype: 'sync',
+          user: 'partner',
+          diffs: [
+            msg.playing !== undefined ? { path: 'transport', prop: 'playing', value: msg.playing } : null,
+            msg.tempo !== undefined ? { path: 'transport', prop: 'tempo', value: msg.tempo } : null
+          ].filter(Boolean)
+        });
+        if (msg.playing !== undefined) producers.partner.transport.playing = msg.playing;
+        if (msg.tempo !== undefined) producers.partner.transport.tempo = msg.tempo;
+        broadcast({ type: 'diff', source: 'partner', diffs: [{ path: 'transport', prop: msg.playing !== undefined ? 'playing' : 'tempo', value: msg.playing !== undefined ? msg.playing : msg.tempo }] });
+      }
+
+      if (msg.type === 'als_save') {
+        broadcast({ type: 'partner_als_save', data: msg });
+      }
+
+      if (msg.type === 'git_diff') {
+        broadcast({ type: 'partner_git_commit', data: msg });
+      }
+    } catch(e) {
+      // Not JSON — raw protocol packet, ignore
+    }
+  });
+
+  // Peer als_diff (partner saved and we got the semantic diff)
+  engine.on('partner_saved', (data) => {
+    broadcast({ type: 'partner_saved', ...data, timestamp: Date.now() });
+    console.log(`[bridge] Partner saved: ${data.changes ? data.changes.length : 0} changes`);
+  });
+
+  // Peer connected/disconnected
+  engine.on('connect', (info) => {
+    producers.partner.online = true;
+    producers.partner.lastSeen = Date.now();
+    producers.partner.label = `Partner · ${info.address || engine.peerIp}`;
+    broadcast({ type: 'state', producers });
+    sendToM4L({ type: 'incoming', subtype: 'connected', partner: info.address || engine.peerIp });
+    console.log(`[bridge] Peer connected via engine: ${info.address || engine.peerIp}`);
+  });
+
+  engine.on('disconnect', (reason) => {
+    producers.partner.online = false;
+    broadcast({ type: 'state', producers });
+    sendToM4L({ type: 'incoming', subtype: 'disconnected', reason });
+    console.log(`[bridge] Peer disconnected: ${reason}`);
+  });
+}
 
 // Partner offline timeout
 setInterval(() => {
@@ -680,6 +815,8 @@ if (PROJECT_PATH || PEER_IP) {
     });
   });
 
+  wireEngineToM4L();
+
   engine.start((err) => {
     if (err) console.error(`[engine] Start error: ${err}`);
     else console.log(`[engine] Started — UDP :${engine._udpPort} TCP :${engine._tcpPort} OneDrive:${engine._oneDriveEnabled}`);
@@ -710,6 +847,7 @@ server.on('request', (req, res) => {
         engineEvents.forEach(evt => {
           engine.on(evt, (data) => broadcast({ type: 'engine_' + evt, data, timestamp: Date.now() }));
         });
+        wireEngineToM4L();
         engine.start((err) => {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify({ ok: !err, error: err ? err.message : null, stats: engine.getStats() }));
