@@ -185,9 +185,27 @@ AbletonClient.prototype._handleDisconnect = function(reason) {
   this._sendLocked = false;
 
   this._emit('disconnected', reason);
+
+  // Auto-reconnect after 2 seconds
+  if (!this._reconnectTimer && !this._intentionalDisconnect) {
+    var self = this;
+    this._reconnectTimer = setTimeout(function() {
+      self._reconnectTimer = null;
+      if (!self._connected && !self._connecting) {
+        self._emit('reconnecting');
+        self.connect().then(function() {
+          self._emit('reconnected');
+        }).catch(function() {
+          // Will trigger _handleDisconnect again → retry
+        });
+      }
+    }, 2000);
+  }
 };
 
 AbletonClient.prototype.disconnect = function() {
+  this._intentionalDisconnect = true;
+  if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
   this._connected = false;
   this._connecting = false;
   if (this._sock) {
