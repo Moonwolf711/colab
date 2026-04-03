@@ -21,7 +21,8 @@ var SYNCED_TRACK_PARAMS = ['volume', 'pan', 'mute', 'solo', 'arm', 'color', 'nam
 
 function ParamSync(abletonClient, engine, options) {
   options = options || {};
-  this._client = abletonClient;
+  this._client = abletonClient;           // for reads (polling)
+  this._writeClient = options.writeClient || abletonClient; // for writes (applies)
   this._engine = engine;
   this._userId = options.userId || 'local';
 
@@ -315,22 +316,23 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
 
   // Use UDP for continuous params (volume, pan) — faster, no blocking
   // Use TCP for discrete params (mute, solo, arm, color, name)
+  // Use _writeClient for all applies — separate TCP connection, never blocked by polling
   if (param === 'volume') {
-    this._client.setTrackVolumeUDP(trackIdx, value);
+    this._writeClient.setTrackVolumeUDP(trackIdx, value);
     applyPromise = Promise.resolve();
   } else if (param === 'pan') {
-    this._client.setTrackPanUDP(trackIdx, value);
+    this._writeClient.setTrackPanUDP(trackIdx, value);
     applyPromise = Promise.resolve();
   } else if (param === 'mute') {
-    applyPromise = this._client.setTrackMute(trackIdx, value);
+    applyPromise = this._writeClient.setTrackMute(trackIdx, value);
   } else if (param === 'solo') {
-    applyPromise = this._client.setTrackSolo(trackIdx, value);
+    applyPromise = this._writeClient.setTrackSolo(trackIdx, value);
   } else if (param === 'arm') {
-    applyPromise = this._client.setTrackArm(trackIdx, value);
+    applyPromise = this._writeClient.setTrackArm(trackIdx, value);
   } else if (param === 'color') {
-    applyPromise = this._client.send('set_track_color', { track_index: trackIdx, color_index: value });
+    applyPromise = this._writeClient.send('set_track_color', { track_index: trackIdx, color_index: value });
   } else if (param === 'name') {
-    applyPromise = this._client.send('set_track_name', { track_index: trackIdx, name: value });
+    applyPromise = this._writeClient.send('set_track_name', { track_index: trackIdx, name: value });
   }
 
   if (applyPromise) {
@@ -359,13 +361,13 @@ ParamSync.prototype._applyRemoteTransport = function(param, value, now) {
 
   if (param === 'tempo') {
     this._transportSnapshot.tempo = value;
-    this._client.setTempo(value).catch(function() {});
+    this._writeClient.setTempo(value).catch(function() {});
   } else if (param === 'playing') {
     this._transportSnapshot.playing = value;
     if (value) {
-      this._client.startPlayback().catch(function() {});
+      this._writeClient.startPlayback().catch(function() {});
     } else {
-      this._client.stopPlayback().catch(function() {});
+      this._writeClient.stopPlayback().catch(function() {});
     }
   }
 
