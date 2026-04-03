@@ -149,8 +149,8 @@ ParamSync.prototype._extractTrackParams = function(track) {
 
 ParamSync.prototype._pollParams = function() {
   if (!this._enabled || !this._client.isConnected()) return;
-  // Skip polling while remote changes are being applied — let them use the TCP connection
   if (this._applyingCount > 0) return;
+  if (this._pollPausedUntil && Date.now() < this._pollPausedUntil) return;
 
   var self = this;
   this._client.getAllTracksInfo().then(function(result) {
@@ -211,6 +211,7 @@ ParamSync.prototype._pollParams = function() {
 ParamSync.prototype._pollTransport = function() {
   if (!this._enabled || !this._client.isConnected()) return;
   if (this._applyingCount > 0) return;
+  if (this._pollPausedUntil && Date.now() < this._pollPausedUntil) return;
 
   var self = this;
   this._client.getSessionInfo().then(function(session) {
@@ -302,8 +303,9 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
     this._trackSnapshot[trackIdx][param] = value;
   }
 
-  // PAUSE polling while applying — prevents polling from hogging the TCP connection
+  // PAUSE polling — prevents polling from hogging TCP AND reading stale data
   this._applyingCount = (this._applyingCount || 0) + 1;
+  this._pollPausedUntil = Date.now() + ECHO_SUPPRESS_MS;
 
   // Apply to Ableton via TCP or UDP
   var self = this;
