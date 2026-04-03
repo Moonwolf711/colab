@@ -442,23 +442,25 @@ AbletonClient.prototype.setDeviceParameterUDP = function(trackIndex, deviceIndex
 // Device methods
 // ---------------------------------------------------------------------------
 
-AbletonClient.prototype.getTrackDevices = function(trackIndex) {
-  return this.send('get_track_devices', { track_index: trackIndex });
+AbletonClient.prototype.getTrackInfo = function(trackIndex) {
+  return this.send('get_track_info', { track_index: trackIndex });
 };
 
 AbletonClient.prototype.getDeviceParameters = function(trackIndex, deviceIndex) {
   return this.send('get_device_parameters', { track_index: trackIndex, device_index: deviceIndex });
 };
 
-AbletonClient.prototype.setDeviceParameter = function(trackIndex, deviceIndex, paramIndex, value) {
+AbletonClient.prototype.setDeviceParameter = function(trackIndex, deviceIndex, paramName, value) {
   return this.send('set_device_parameter', {
     track_index: trackIndex, device_index: deviceIndex,
-    parameter_index: paramIndex, value: value
+    parameter_name: paramName, value: value
   });
 };
 
-AbletonClient.prototype.insertDeviceByName = function(trackIndex, deviceName) {
-  return this.send('insert_device_by_name', { track_index: trackIndex, device_name: deviceName });
+AbletonClient.prototype.insertDevice = function(trackIndex, deviceName, targetIndex) {
+  var params = { track_index: trackIndex, device_name: deviceName };
+  if (targetIndex !== undefined) params.target_index = targetIndex;
+  return this.send('insert_device', params);
 };
 
 AbletonClient.prototype.deleteDevice = function(trackIndex, deviceIndex) {
@@ -469,24 +471,16 @@ AbletonClient.prototype.deleteDevice = function(trackIndex, deviceIndex) {
 // Clip methods
 // ---------------------------------------------------------------------------
 
-AbletonClient.prototype.getTrackClips = function(trackIndex) {
-  return this.send('get_track_clips', { track_index: trackIndex });
-};
-
 AbletonClient.prototype.getClipNotes = function(trackIndex, clipIndex) {
-  return this.send('get_clip_notes', { track_index: trackIndex, clip_index: clipIndex });
+  return this.send('get_clip_notes', { track_index: trackIndex, clip_index: clipIndex, start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128 });
 };
 
 AbletonClient.prototype.addNotesToClip = function(trackIndex, clipIndex, notes) {
   return this.send('add_notes_to_clip', { track_index: trackIndex, clip_index: clipIndex, notes: notes });
 };
 
-AbletonClient.prototype.removeNotesFromClip = function(trackIndex, clipIndex, fromTime, toTime, fromPitch, toPitch) {
-  return this.send('remove_notes_from_clip', {
-    track_index: trackIndex, clip_index: clipIndex,
-    from_time: fromTime || 0, to_time: toTime || 9999,
-    from_pitch: fromPitch || 0, to_pitch: toPitch || 127
-  });
+AbletonClient.prototype.clearClipNotes = function(trackIndex, clipIndex) {
+  return this.send('clear_clip_notes', { track_index: trackIndex, clip_index: clipIndex });
 };
 
 AbletonClient.prototype.createClip = function(trackIndex, clipIndex, length) {
@@ -513,14 +507,14 @@ AbletonClient.prototype.duplicateClip = function(trackIndex, clipIndex) {
 // Automation methods
 // ---------------------------------------------------------------------------
 
-AbletonClient.prototype.getClipAutomation = function(trackIndex, clipIndex, paramId) {
-  return this.send('get_clip_automation', { track_index: trackIndex, clip_index: clipIndex, parameter_id: paramId });
+AbletonClient.prototype.getClipAutomation = function(trackIndex, clipIndex, paramName) {
+  return this.send('get_clip_automation', { track_index: trackIndex, clip_index: clipIndex, parameter_name: paramName });
 };
 
-AbletonClient.prototype.createClipAutomation = function(trackIndex, clipIndex, paramId, points) {
+AbletonClient.prototype.createClipAutomation = function(trackIndex, clipIndex, paramName, points) {
   return this.send('create_clip_automation', {
     track_index: trackIndex, clip_index: clipIndex,
-    parameter_id: paramId, points: points
+    parameter_name: paramName, automation_points: points
   });
 };
 

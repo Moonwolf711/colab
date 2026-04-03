@@ -229,125 +229,123 @@ ParamSync.prototype._pollStructure = function() {
 
   for (var n = 0; n < TRACKS_PER_SCAN; n++) {
     var t = (startIdx + n) % this._trackCount;
-    if (this._layerEnabled.devices) this._scanTrackDevices(t);
-    if (this._layerEnabled.clips) this._scanTrackClips(t);
+    this._scanTrackStructure(t);
   }
 
   this._scanIndex = (startIdx + TRACKS_PER_SCAN) % this._trackCount;
 };
 
-ParamSync.prototype._scanTrackDevices = function(trackIdx) {
+/**
+ * Scan a single track's devices + clip slots via get_track_info (one TCP call).
+ */
+ParamSync.prototype._scanTrackStructure = function(trackIdx) {
   var self = this;
-  this._client.getTrackDevices(trackIdx).then(function(result) {
-    var devices = Array.isArray(result) ? result : (result && result.devices ? result.devices : []);
+  this._client.getTrackInfo(trackIdx).then(function(result) {
     var now = Date.now();
-    var oldList = self._deviceListSnapshot[trackIdx] || [];
-    var newList = [];
 
-    for (var d = 0; d < devices.length; d++) {
-      newList.push({ name: devices[d].name || '', class_name: devices[d].class_name || '' });
+    // --- Devices ---
+    if (self._layerEnabled.devices) {
+      var devices = result.devices || [];
+      var oldDevList = self._deviceListSnapshot[trackIdx] || [];
+      var newDevList = [];
+
+      for (var d = 0; d < devices.length; d++) {
+        newDevList.push({ name: devices[d].name || '', class_name: devices[d].class_name || '' });
+      }
+
+      if (newDevList.length > oldDevList.length) {
+        for (var a = oldDevList.length; a < newDevList.length; a++) {
+          var addKey = 'dev:' + trackIdx + ':add:' + a;
+          if (!self._isSuppressed(addKey, now)) {
+            self._engine.sendSyncDelta('device_op', {
+              op: 'add', track: trackIdx, device_index: a,
+              device_name: newDevList[a].name, class_name: newDevList[a].class_name
+            });
+            self._emit('local_change', {
+              track: trackIdx, param: 'device_add',
+              oldValue: null, newValue: newDevList[a].name, timestamp: now
+            });
+          }
+        }
+      }
+
+      if (newDevList.length < oldDevList.length) {
+        for (var r = newDevList.length; r < oldDevList.length; r++) {
+          var rmKey = 'dev:' + trackIdx + ':rm:' + r;
+          if (!self._isSuppressed(rmKey, now)) {
+            self._engine.sendSyncDelta('device_op', {
+              op: 'remove', track: trackIdx, device_index: r,
+              device_name: oldDevList[r].name
+            });
+            self._emit('local_change', {
+              track: trackIdx, param: 'device_remove',
+              oldValue: oldDevList[r].name, newValue: null, timestamp: now
+            });
+          }
+        }
+      }
+
+      self._deviceListSnapshot[trackIdx] = newDevList;
     }
 
-    // Detect device additions
-    if (newList.length > oldList.length) {
-      for (var a = oldList.length; a < newList.length; a++) {
-        var addKey = 'dev:' + trackIdx + ':add:' + a;
-        if (!self._isSuppressed(addKey, now)) {
-          self._engine.sendSyncDelta('device_op', {
-            op: 'add', track: trackIdx, device_index: a,
-            device_name: newList[a].name, class_name: newList[a].class_name
-          });
-          self._emit('local_change', {
-            track: trackIdx, param: 'device_add',
-            oldValue: null, newValue: newList[a].name, timestamp: now
-          });
+    // --- Clips ---
+    if (self._layerEnabled.clips) {
+      var slots = result.clip_slots || [];
+      var oldClipList = self._clipListSnapshot[trackIdx] || [];
+
+      for (var c = 0; c < slots.length; c++) {
+        var slot = slots[c];
+        var oldSlot = oldClipList[c] || {};
+        var hasClip = !!slot.has_clip;
+        var hadClip = !!oldSlot.has_clip;
+        var clipInfo = slot.clip || {};
+        var oldClipInfo = oldSlot.clip || {};
+        var key = trackIdx + ':' + c;
+
+        if (hasClip && !hadClip) {
+          var createKey = 'clip:' + key + ':create';
+          if (!self._isSuppressed(createKey, now)) {
+            self._engine.sendSyncDelta('clip_op', {
+              op: 'create', track: trackIdx, clip: c,
+              name: clipInfo.name || '', length: clipInfo.length || 4
+            });
+            self._emit('local_change', {
+              track: trackIdx, param: 'clip_create', oldValue: null,
+              newValue: clipInfo.name || ('Clip ' + c), timestamp: now
+            });
+          }
         }
-      }
-    }
 
-    // Detect device removals
-    if (newList.length < oldList.length) {
-      for (var r = newList.length; r < oldList.length; r++) {
-        var rmKey = 'dev:' + trackIdx + ':rm:' + r;
-        if (!self._isSuppressed(rmKey, now)) {
-          self._engine.sendSyncDelta('device_op', {
-            op: 'remove', track: trackIdx, device_index: r,
-            device_name: oldList[r].name
-          });
-          self._emit('local_change', {
-            track: trackIdx, param: 'device_remove',
-            oldValue: oldList[r].name, newValue: null, timestamp: now
-          });
+        if (!hasClip && hadClip) {
+          var deleteKey = 'clip:' + key + ':delete';
+          if (!self._isSuppressed(deleteKey, now)) {
+            self._engine.sendSyncDelta('clip_op', {
+              op: 'delete', track: trackIdx, clip: c
+            });
+            self._emit('local_change', {
+              track: trackIdx, param: 'clip_delete',
+              oldValue: oldClipInfo.name || ('Clip ' + c), newValue: null, timestamp: now
+            });
+          }
         }
-      }
-    }
 
-    self._deviceListSnapshot[trackIdx] = newList;
-  }).catch(function() {});
-};
-
-ParamSync.prototype._scanTrackClips = function(trackIdx) {
-  var self = this;
-  this._client.getTrackClips(trackIdx).then(function(result) {
-    var clips = Array.isArray(result) ? result : (result && result.clips ? result.clips : []);
-    var now = Date.now();
-    var oldList = self._clipListSnapshot[trackIdx] || [];
-
-    for (var c = 0; c < clips.length; c++) {
-      var clip = clips[c];
-      var key = trackIdx + ':' + c;
-      var oldClip = oldList[c] || {};
-      var hasClip = !!(clip.has_clip || clip.name);
-      var hadClip = !!(oldClip.has_clip || oldClip.name);
-
-      // Clip created
-      if (hasClip && !hadClip) {
-        var createKey = 'clip:' + key + ':create';
-        if (!self._isSuppressed(createKey, now)) {
-          self._engine.sendSyncDelta('clip_op', {
-            op: 'create', track: trackIdx, clip: c,
-            name: clip.name || '', length: clip.length || 4, color: clip.color_index
-          });
-          self._emit('local_change', {
-            track: trackIdx, param: 'clip_create', oldValue: null,
-            newValue: clip.name || ('Clip ' + c), timestamp: now
-          });
-        }
-      }
-
-      // Clip deleted
-      if (!hasClip && hadClip) {
-        var deleteKey = 'clip:' + key + ':delete';
-        if (!self._isSuppressed(deleteKey, now)) {
-          self._engine.sendSyncDelta('clip_op', {
-            op: 'delete', track: trackIdx, clip: c
-          });
-          self._emit('local_change', {
-            track: trackIdx, param: 'clip_delete',
-            oldValue: oldClip.name || ('Clip ' + c), newValue: null, timestamp: now
-          });
-        }
-      }
-
-      // Clip state change (playing/stopped)
-      if (hasClip && hadClip) {
-        if (clip.is_playing !== oldClip.is_playing) {
+        if (hasClip && hadClip && clipInfo.is_playing !== oldClipInfo.is_playing) {
           var stateKey = 'clip:' + key + ':state';
           if (!self._isSuppressed(stateKey, now)) {
-            var op = clip.is_playing ? 'fire' : 'stop';
+            var op = clipInfo.is_playing ? 'fire' : 'stop';
             self._engine.sendSyncDelta('clip_op', {
               op: op, track: trackIdx, clip: c
             });
             self._emit('local_change', {
               track: trackIdx, param: 'clip_' + op,
-              oldValue: !clip.is_playing, newValue: clip.is_playing, timestamp: now
+              oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now
             });
           }
         }
       }
-    }
 
-    self._clipListSnapshot[trackIdx] = clips;
+      self._clipListSnapshot[trackIdx] = slots;
+    }
   }).catch(function() {});
 };
 
@@ -383,22 +381,22 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
 
         for (var p = 0; p < params.length; p++) {
           var param = params[p];
-          var pIdx = param.index !== undefined ? param.index : p;
+          var pName = param.name || ('P' + p);
           var val = param.value;
-          newParams[pIdx] = val;
+          newParams[pName] = val;
 
-          if (oldParams[pIdx] !== undefined && oldParams[pIdx] !== val) {
-            var paramKey = 'dp:' + trackIdx + ':' + devIdx + ':' + pIdx;
+          if (oldParams[pName] !== undefined && oldParams[pName] !== val) {
+            var paramKey = 'dp:' + trackIdx + ':' + devIdx + ':' + pName;
             if (!self._isSuppressed(paramKey, now)) {
               self._recentLocalChange[paramKey] = now;
               self._engine.sendSyncDelta('device_param', {
-                track: trackIdx, device: devIdx, param_index: pIdx,
-                value: val, param_name: param.name || ''
+                track: trackIdx, device: devIdx,
+                param_name: pName, value: val
               });
               self._emit('local_change', {
                 track: trackIdx, param: 'device_param',
-                oldValue: oldParams[pIdx], newValue: val,
-                detail: (param.name || 'P' + pIdx), timestamp: now
+                oldValue: oldParams[pName], newValue: val,
+                detail: pName, timestamp: now
               });
             }
           }
@@ -444,21 +442,22 @@ ParamSync.prototype._pollClipAutomation = function(trackIdx, clipIdx) {
   if (!deviceList || deviceList.length === 0) return;
 
   var self = this;
-  // Poll automation for first device's first 4 params
+  // Poll automation for first device's first 4 param names
   var devIdx = 0;
   var snapKey = trackIdx + ':' + devIdx;
   var deviceParams = this._deviceSnapshot[snapKey];
   if (!deviceParams) return;
 
-  var paramIds = Object.keys(deviceParams).slice(0, 4);
-  for (var i = 0; i < paramIds.length; i++) {
-    (function(paramId) {
-      self._client.getClipAutomation(trackIdx, clipIdx, paramId).then(function(result) {
-        var points = Array.isArray(result) ? result : (result && result.points ? result.points : []);
+  var paramNames = Object.keys(deviceParams).slice(0, 4);
+  for (var i = 0; i < paramNames.length; i++) {
+    (function(paramName) {
+      self._client.getClipAutomation(trackIdx, clipIdx, paramName).then(function(result) {
+        if (!result || !result.has_automation) return;
+        var points = result.points || [];
         if (points.length === 0) return;
 
         var now = Date.now();
-        var key = trackIdx + ':' + clipIdx + ':' + paramId;
+        var key = trackIdx + ':' + clipIdx + ':' + paramName;
         var hash = self._hashPoints(points);
 
         if (self._autoSnapshot[key] && self._autoSnapshot[key] !== hash) {
@@ -466,7 +465,7 @@ ParamSync.prototype._pollClipAutomation = function(trackIdx, clipIdx) {
           if (!self._isSuppressed(suppressKey, now)) {
             self._recentLocalChange[suppressKey] = now;
             self._engine.sendSyncDelta('automation', {
-              track: trackIdx, clip: clipIdx, param_id: paramId, points: points
+              track: trackIdx, clip: clipIdx, param_name: paramName, points: points
             });
             self._emit('local_change', {
               track: trackIdx, param: 'automation',
@@ -477,7 +476,7 @@ ParamSync.prototype._pollClipAutomation = function(trackIdx, clipIdx) {
 
         self._autoSnapshot[key] = hash;
       }).catch(function() {});
-    })(paramIds[i]);
+    })(paramNames[i]);
   }
 };
 
@@ -612,20 +611,20 @@ ParamSync.prototype._applyRemoteTransportPayload = function(payload, now) {
 // --- Device parameter apply ---
 
 ParamSync.prototype._applyRemoteDeviceParam = function(payload, now) {
-  var t = payload.track, d = payload.device, pIdx = payload.param_index, val = payload.value;
-  console.log('[param-sync] APPLY DEVICE PARAM: T' + t + ':D' + d + ':P' + pIdx + ' = ' + val);
+  var t = payload.track, d = payload.device, pName = payload.param_name, val = payload.value;
+  console.log('[param-sync] APPLY DEVICE PARAM: T' + t + ':D' + d + ':' + pName + ' = ' + val);
 
-  var paramKey = 'dp:' + t + ':' + d + ':' + pIdx;
+  var paramKey = 'dp:' + t + ':' + d + ':' + pName;
   this._recentRemoteApply[paramKey] = now + ECHO_SUPPRESS_MS;
 
   // Update snapshot
   var snapKey = t + ':' + d;
   if (!this._deviceSnapshot[snapKey]) this._deviceSnapshot[snapKey] = {};
-  this._deviceSnapshot[snapKey][pIdx] = val;
+  this._deviceSnapshot[snapKey][pName] = val;
 
-  // Apply via UDP for speed
-  this._writeClient.setDeviceParameterUDP(t, d, pIdx, val);
-  this._emit('remote_applied', { track: t, param: 'device_param', value: val, detail: payload.param_name });
+  // Apply via UDP for speed (uses parameter_name)
+  this._writeClient.setDeviceParameterUDP(t, d, pName, val);
+  this._emit('remote_applied', { track: t, param: 'device_param', value: val, detail: pName });
   this._emit('remote_change', { track: t, param: 'device_param', value: payload, timestamp: now });
 };
 
@@ -644,7 +643,7 @@ ParamSync.prototype._applyRemoteClipNotes = function(payload, now) {
   var self = this;
 
   // Clear existing notes, then add new ones
-  this._writeClient.removeNotesFromClip(t, c, 0, 9999, 0, 127).then(function() {
+  this._writeClient.clearClipNotes(t, c).then(function() {
     if (payload.notes && payload.notes.length > 0) {
       return self._writeClient.addNotesToClip(t, c, payload.notes);
     }
@@ -697,7 +696,7 @@ ParamSync.prototype._applyRemoteDeviceOp = function(payload, now) {
 
   var p;
   if (op === 'add' && payload.device_name) {
-    p = this._writeClient.insertDeviceByName(t, payload.device_name);
+    p = this._writeClient.insertDevice(t, payload.device_name);
   } else if (op === 'remove') {
     p = this._writeClient.deleteDevice(t, payload.device_index);
   }
@@ -717,15 +716,15 @@ ParamSync.prototype._applyRemoteDeviceOp = function(payload, now) {
 // --- Automation apply ---
 
 ParamSync.prototype._applyRemoteAutomation = function(payload, now) {
-  var t = payload.track, c = payload.clip, pId = payload.param_id;
-  console.log('[param-sync] APPLY AUTOMATION: T' + t + ':C' + c + ':P' + pId + ' (' + (payload.points ? payload.points.length : 0) + ' points)');
+  var t = payload.track, c = payload.clip, pName = payload.param_name;
+  console.log('[param-sync] APPLY AUTOMATION: T' + t + ':C' + c + ':' + pName + ' (' + (payload.points ? payload.points.length : 0) + ' points)');
 
-  var suppressKey = 'auto:' + t + ':' + c + ':' + pId;
+  var suppressKey = 'auto:' + t + ':' + c + ':' + pName;
   this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
-  this._autoSnapshot[t + ':' + c + ':' + pId] = this._hashPoints(payload.points || []);
+  this._autoSnapshot[t + ':' + c + ':' + pName] = this._hashPoints(payload.points || []);
 
   var self = this;
-  this._writeClient.createClipAutomation(t, c, pId, payload.points || []).then(function() {
+  this._writeClient.createClipAutomation(t, c, pName, payload.points || []).then(function() {
     self._emit('remote_applied', { track: t, param: 'automation', value: (payload.points || []).length + ' points' });
   }).catch(function(err) {
     self._emit('remote_apply_error', { track: t, param: 'automation', error: err.message || String(err) });
