@@ -17,7 +17,7 @@ var ECHO_SUPPRESS_MS = 150;                       // ignore self-changes within 
 var CONFLICT_WINDOW_MS = 500;                     // two users touching same param = conflict
 
 // Track params we sync
-var SYNCED_TRACK_PARAMS = ['volume', 'pan', 'mute', 'solo', 'arm'];
+var SYNCED_TRACK_PARAMS = ['volume', 'pan', 'mute', 'solo', 'arm', 'color', 'name'];
 
 function ParamSync(abletonClient, engine, options) {
   options = options || {};
@@ -137,7 +137,9 @@ ParamSync.prototype._extractTrackParams = function(track) {
     pan: track.pan !== undefined ? track.pan : 0,
     mute: !!track.mute,
     solo: !!track.solo,
-    arm: !!track.arm
+    arm: !!track.arm,
+    color: track.color !== undefined ? track.color : -1,
+    name: track.name || ''
   };
 };
 
@@ -155,7 +157,7 @@ ParamSync.prototype._pollParams = function() {
 
     // Grow snapshot if tracks were added
     while (self._trackSnapshot.length < tracks.length) {
-      self._trackSnapshot.push({ volume: 0.85, pan: 0, mute: false, solo: false, arm: false });
+      self._trackSnapshot.push({ volume: 0.85, pan: 0, mute: false, solo: false, arm: false, color: -1, name: '' });
     }
 
     for (var i = 0; i < tracks.length; i++) {
@@ -315,6 +317,10 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
     applyPromise = this._client.setTrackSolo(trackIdx, value);
   } else if (param === 'arm') {
     applyPromise = this._client.setTrackArm(trackIdx, value);
+  } else if (param === 'color') {
+    applyPromise = this._client.send('set_track_color', { track_index: trackIdx, color_index: value });
+  } else if (param === 'name') {
+    applyPromise = this._client.send('set_track_name', { track_index: trackIdx, name: value });
   }
 
   if (applyPromise) {
