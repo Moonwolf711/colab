@@ -149,6 +149,8 @@ ParamSync.prototype._extractTrackParams = function(track) {
 
 ParamSync.prototype._pollParams = function() {
   if (!this._enabled || !this._client.isConnected()) return;
+  // Skip polling while remote changes are being applied — let them use the TCP connection
+  if (this._applyingCount > 0) return;
 
   var self = this;
   this._client.getAllTracksInfo().then(function(result) {
@@ -208,6 +210,7 @@ ParamSync.prototype._pollParams = function() {
 
 ParamSync.prototype._pollTransport = function() {
   if (!this._enabled || !this._client.isConnected()) return;
+  if (this._applyingCount > 0) return;
 
   var self = this;
   this._client.getSessionInfo().then(function(session) {
@@ -294,17 +297,20 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
   // Check for conflict
   this._checkConflict(paramKey, 'remote', now);
 
-  // Update local snapshot
+  // Update local snapshot BEFORE apply so polling won't see a diff
   if (this._trackSnapshot[trackIdx]) {
     this._trackSnapshot[trackIdx][param] = value;
   }
+
+  // PAUSE polling while applying — prevents polling from hogging the TCP connection
+  this._applyingCount = (this._applyingCount || 0) + 1;
 
   // Apply to Ableton via TCP or UDP
   var self = this;
   var applyPromise;
 
   // Use UDP for continuous params (volume, pan) — faster, no blocking
-  // Use TCP for discrete params (mute, solo, arm) — needs confirmation
+  // Use TCP for discrete params (mute, solo, arm, color, name)
   if (param === 'volume') {
     this._client.setTrackVolumeUDP(trackIdx, value);
     applyPromise = Promise.resolve();
@@ -325,12 +331,14 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
 
   if (applyPromise) {
     applyPromise.then(function(result) {
+      self._applyingCount = Math.max(0, (self._applyingCount || 0) - 1);
       self._emit('remote_applied', { track: trackIdx, param: param, value: value, result: result });
     }).catch(function(err) {
+      self._applyingCount = Math.max(0, (self._applyingCount || 0) - 1);
       self._emit('remote_apply_error', { track: trackIdx, param: param, value: value, error: err.message || String(err) });
     });
   } else {
-    // No handler for this param — just log it
+    self._applyingCount = Math.max(0, (self._applyingCount || 0) - 1);
     self._emit('remote_apply_error', { track: trackIdx, param: param, value: value, error: 'no handler for param: ' + param });
   }
 
