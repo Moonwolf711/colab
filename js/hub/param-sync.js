@@ -134,11 +134,11 @@ ParamSync.prototype._takeInitialSnapshot = function() {
 ParamSync.prototype._extractTrackParams = function(track) {
   return {
     volume: track.volume !== undefined ? track.volume : 0.85,
-    pan: track.pan !== undefined ? track.pan : 0,
+    pan: track.panning !== undefined ? track.panning : (track.pan !== undefined ? track.pan : 0),
     mute: !!track.mute,
     solo: !!track.solo,
     arm: !!track.arm,
-    color: track.color !== undefined ? track.color : -1,
+    color: track.color_index !== undefined ? track.color_index : (track.color !== undefined ? track.color : -1),
     name: track.name || ''
   };
 };
