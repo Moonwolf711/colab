@@ -22,6 +22,10 @@ var DEFAULT_CONFIG = {
   cursor: true,
   transport: true,
   mixer: true,
+  devices: true,
+  clips: true,
+  notes: true,
+  automation: true,
   audioMonitor: false,
   trackOverrides: {}  // {trackIndex: {mixer: bool}}
 };
@@ -112,13 +116,16 @@ SyncController.prototype._wireEvents = function() {
     self._emit('error', err);
   });
 
-  // CursorSync events
+  // CursorSync events — also feed focused track into param-sync for deep polling
   this._cursorSync.on('partner_cursor', function(data) {
     self._emit('partner_cursor', data);
   });
 
   this._cursorSync.on('local_cursor', function(data) {
     self._emit('local_cursor', data);
+    // Update param-sync focus so deep polling targets the track we're editing
+    if (data.track >= 0) self._paramSync.setFocusedTrack(data.track);
+    if (data.scene >= 0) self._paramSync.setFocusedClip(data.scene);
   });
 
   // ParamSync events
@@ -235,6 +242,10 @@ SyncController.prototype.setConfig = function(newConfig) {
   if (newConfig.cursor !== undefined) this._config.cursor = newConfig.cursor;
   if (newConfig.transport !== undefined) this._config.transport = newConfig.transport;
   if (newConfig.mixer !== undefined) this._config.mixer = newConfig.mixer;
+  if (newConfig.devices !== undefined) this._config.devices = newConfig.devices;
+  if (newConfig.clips !== undefined) this._config.clips = newConfig.clips;
+  if (newConfig.notes !== undefined) this._config.notes = newConfig.notes;
+  if (newConfig.automation !== undefined) this._config.automation = newConfig.automation;
   if (newConfig.audioMonitor !== undefined) this._config.audioMonitor = newConfig.audioMonitor;
   if (newConfig.trackOverrides) {
     var keys = Object.keys(newConfig.trackOverrides);
@@ -265,8 +276,13 @@ SyncController.prototype._applyConfig = function() {
     this._cursorSync.stop();
   }
 
-  // Param sync — mixer toggle
-  this._paramSync.setEnabled(this._config.mixer || this._config.transport);
+  // Param sync — master enable + per-layer toggles
+  this._paramSync.setEnabled(this._config.mixer || this._config.transport || this._config.devices || this._config.clips);
+  this._paramSync.setLayerEnabled('mixer', this._config.mixer);
+  this._paramSync.setLayerEnabled('devices', this._config.devices);
+  this._paramSync.setLayerEnabled('clips', this._config.clips);
+  this._paramSync.setLayerEnabled('notes', this._config.notes);
+  this._paramSync.setLayerEnabled('automation', this._config.automation);
 
   // Per-track overrides
   var overrides = this._config.trackOverrides;

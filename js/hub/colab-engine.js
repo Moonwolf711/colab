@@ -610,6 +610,29 @@ CoLabEngine.prototype.sendTransport = function(playing, tempo) {
   this.udp.sendState(buf);
 };
 
+/**
+ * Send a sync delta to peer. Small payloads go via UDP, large ones via TCP.
+ * @param {string} deltaType - e.g. 'device_param', 'clip_notes', 'clip_op', 'device_op', 'automation'
+ * @param {object} payload - delta data
+ */
+CoLabEngine.prototype.sendSyncDelta = function(deltaType, payload) {
+  payload.type = deltaType;
+  var data = JSON.stringify(payload);
+
+  // Large payloads (notes, automation) go via TCP for reliability
+  if (data.length > 1400 && this._connected) {
+    this.tcp.sendMessage(C.PKT.STATE_UPDATE, payload);
+    return;
+  }
+
+  // Small payloads (device params, clip ops) go via UDP for speed
+  var buf = Buffer.alloc(5 + data.length);
+  buf[0] = C.PKT.STATE_UPDATE;
+  buf.writeUInt32LE(this.udp._txSeq || 0, 1);
+  Buffer.from(data).copy(buf, 5);
+  this.udp.sendState(buf);
+};
+
 CoLabEngine.prototype.sendFile = function(relativePath, fileData, callback) {
   this.tcp.sendFile(relativePath, fileData);
   if (callback) callback(null);
