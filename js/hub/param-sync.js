@@ -13,7 +13,7 @@ var C = require('../shared/constants');
 
 var PARAM_POLL_MS = C.PARAM_DEBOUNCE_MS * 2;    // ~60ms = ~16Hz
 var TRANSPORT_POLL_MS = 200;                      // 5Hz for tempo/playing
-var ECHO_SUPPRESS_MS = 150;                       // ignore self-changes within this window
+var ECHO_SUPPRESS_MS = 1000;                      // ignore self-changes within this window (needs to cover full network round-trip)
 var CONFLICT_WINDOW_MS = 500;                     // two users touching same param = conflict
 
 // Track params we sync
