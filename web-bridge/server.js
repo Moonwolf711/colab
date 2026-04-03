@@ -772,6 +772,17 @@ const ALS_FILE = process.env.COLAB_ALS || null;
 
 let engine = null;
 
+const engineEvents = [
+  'connect', 'disconnect', 'cursor', 'state', 'rtt', 'bandwidth',
+  'als_diff', 'partner_saved', 'conflict', 'conflict_diff',
+  'git_commit', 'git_push', 'git_error',
+  'asset_missing', 'peer_manifest', 'file_received', 'file_changed',
+  'backpressure', 'timeout', 'reconnecting', 'buffer_adjusted',
+  'sync_started', 'sync_param', 'sync_cursor', 'sync_conflict',
+  'sync_config', 'sync_change',
+  'error'
+];
+
 if (PROJECT_PATH || PEER_IP) {
   engine = new CoLabEngine({
     projectPath: PROJECT_PATH,
@@ -788,16 +799,7 @@ if (PROJECT_PATH || PEER_IP) {
   });
 
   // Forward engine events to browser clients via WebSocket
-  const engineEvents = [
-    'connect', 'disconnect', 'cursor', 'state', 'rtt', 'bandwidth',
-    'als_diff', 'partner_saved', 'conflict', 'conflict_diff',
-    'git_commit', 'git_push', 'git_error',
-    'asset_missing', 'peer_manifest', 'file_received', 'file_changed',
-    'backpressure', 'timeout', 'reconnecting', 'buffer_adjusted',
-    'sync_started', 'sync_param', 'sync_cursor', 'sync_conflict',
-    'sync_config', 'sync_change',
-    'error'
-  ];
+  // NOTE: engineEvents defined at module scope so /api/engine/start can use it too
   engineEvents.forEach(evt => {
     engine.on(evt, (data) => {
       broadcast({ type: 'engine_' + evt, data, timestamp: Date.now() });
