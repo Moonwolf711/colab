@@ -130,6 +130,15 @@ SyncController.prototype._wireEvents = function() {
     self._logChange('conflict', 'Both touched ' + data.paramKey + ' — ' + data.winner + ' wins');
     self._emit('conflict', data);
   });
+
+  this._paramSync.on('remote_applied', function(data) {
+    self._logChange('system', 'Applied: Track ' + data.track + ' ' + data.param + ' = ' + data.value);
+  });
+
+  this._paramSync.on('remote_apply_error', function(data) {
+    self._logChange('error', 'Failed to apply Track ' + data.track + ' ' + data.param + ': ' + data.error);
+    self._emit('error', data);
+  });
 };
 
 SyncController.prototype._formatChange = function(data) {

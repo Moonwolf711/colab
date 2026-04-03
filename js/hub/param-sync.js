@@ -324,7 +324,14 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
   }
 
   if (applyPromise) {
-    applyPromise.catch(function() {});
+    applyPromise.then(function(result) {
+      self._emit('remote_applied', { track: trackIdx, param: param, value: value, result: result });
+    }).catch(function(err) {
+      self._emit('remote_apply_error', { track: trackIdx, param: param, value: value, error: err.message || String(err) });
+    });
+  } else {
+    // No handler for this param — just log it
+    self._emit('remote_apply_error', { track: trackIdx, param: param, value: value, error: 'no handler for param: ' + param });
   }
 
   this._emit('remote_change', {
