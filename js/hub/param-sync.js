@@ -286,6 +286,8 @@ ParamSync.prototype._onPeerState = function(data) {
 };
 
 ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
+  console.log('[param-sync] APPLY REMOTE: track=' + trackIdx + ' param=' + param + ' value=' + value);
+
   // Check per-track sync config
   var config = this._trackSyncConfig[trackIdx];
   if (config && config.mixer === false) return;
@@ -334,9 +336,11 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
   if (applyPromise) {
     applyPromise.then(function(result) {
       self._applyingCount = Math.max(0, (self._applyingCount || 0) - 1);
+      console.log('[param-sync] APPLIED OK: track=' + trackIdx + ' ' + param + '=' + value + ' result=' + JSON.stringify(result));
       self._emit('remote_applied', { track: trackIdx, param: param, value: value, result: result });
     }).catch(function(err) {
       self._applyingCount = Math.max(0, (self._applyingCount || 0) - 1);
+      console.log('[param-sync] APPLY FAILED: track=' + trackIdx + ' ' + param + '=' + value + ' err=' + (err.message || err));
       self._emit('remote_apply_error', { track: trackIdx, param: param, value: value, error: err.message || String(err) });
     });
   } else {
