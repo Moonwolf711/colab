@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>coLaB LiveSync Dashboard</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; background: #0a0a0a; color: #e0e0e0; font-size: 13px; }
+
+  .header { background: #111; border-bottom: 1px solid #333; padding: 12px 20px; display: flex; align-items: center; justify-content: space-between; }
+  .header h1 { font-size: 16px; font-weight: 600; color: #fff; }
+  .header .status { display: flex; gap: 12px; align-items: center; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  .dot.on { background: #4caf50; box-shadow: 0 0 6px #4caf50; }
+  .dot.off { background: #666; }
+  .dot.warn { background: #ff9800; box-shadow: 0 0 6px #ff9800; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: #222; padding: 1px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel { background: #111; padding: 16px; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; color: #888; margin-bottom: 12px; letter-spacing: 1px; }
+  .panel.full { grid-column: 1 / -1; }
+
+  .kv { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #1a1a1a; }
+  .kv .label { color: #888; }
+  .kv .value { color: #fff; text-align: right; }
+
+  .toggle-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #1a1a1a; }
+  .toggle-row .name { color: #ccc; }
+
+  .toggle { position: relative; width: 36px; height: 20px; cursor: pointer; }
+  .toggle input { display: none; }
+  .toggle .slider { position: absolute; inset: 0; background: #333; border-radius: 10px; transition: 0.2s; }
+  .toggle .slider:before { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; background: #888; border-radius: 50%; transition: 0.2s; }
+  .toggle input:checked + .slider { background: #2196f3; }
+  .toggle input:checked + .slider:before { transform: translateX(16px); background: #fff; }
+
+  .track-list { max-height: 240px; overflow-y: auto; }
+  .track-item { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #1a1a1a; }
+  .track-item .idx { color: #555; width: 24px; }
+  .track-item .name { flex: 1; color: #ccc; }
+  .track-item.partner-cursor { background: rgba(33, 150, 243, 0.1); border-left: 3px solid #2196f3; padding-left: 8px; }
+  .track-item.local-cursor { border-left: 3px solid #4caf50; padding-left: 8px; }
+
+  .change-log { max-height: 300px; overflow-y: auto; font-size: 12px; }
+  .change-entry { padding: 3px 0; border-bottom: 1px solid #1a1a1a; display: flex; gap: 8px; }
+  .change-entry .time { color: #555; min-width: 50px; }
+  .change-entry .src { min-width: 60px; font-weight: 600; }
+  .change-entry .src.local { color: #4caf50; }
+  .change-entry .src.partner { color: #2196f3; }
+  .change-entry .src.system { color: #888; }
+  .change-entry .src.conflict { color: #ff9800; }
+  .change-entry .text { color: #ccc; }
+
+  .git-entry { padding: 4px 0; border-bottom: 1px solid #1a1a1a; }
+  .git-entry .hash { color: #ff9800; font-size: 11px; }
+  .git-entry .msg { color: #ccc; margin-top: 2px; }
+
+  .btn { background: #222; border: 1px solid #444; color: #ccc; padding: 4px 12px; cursor: pointer; border-radius: 3px; font-size: 12px; font-family: inherit; }
+  .btn:hover { background: #333; color: #fff; }
+  .btn.active { background: #2196f3; border-color: #2196f3; color: #fff; }
+
+  #ws-status { font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>coLaB LiveSync</h1>
+  <div class="status">
+    <span id="ws-status"><span class="dot off"></span> Connecting...</span>
+    <span id="ableton-status"><span class="dot off"></span> Ableton</span>
+    <span id="peer-status"><span class="dot off"></span> Peer</span>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- Partner Info -->
+  <div class="panel" id="partner-panel">
+    <h2>Partner</h2>
+    <div class="kv"><span class="label">Address</span><span class="value" id="partner-ip">--</span></div>
+    <div class="kv"><span class="label">Cursor Track</span><span class="value" id="partner-track">--</span></div>
+    <div class="kv"><span class="label">Cursor Scene</span><span class="value" id="partner-scene">--</span></div>
+    <div class="kv"><span class="label">RTT (UDP)</span><span class="value" id="rtt-udp">--</span></div>
+    <div class="kv"><span class="label">RTT (TCP)</span><span class="value" id="rtt-tcp">--</span></div>
+  </div>
+
+  <!-- Sync Toggles -->
+  <div class="panel" id="toggles-panel">
+    <h2>Sync Toggles</h2>
+    <div class="toggle-row">
+      <span class="name">Cursor tracking</span>
+      <label class="toggle"><input type="checkbox" id="toggle-cursor" checked><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span class="name">Transport lock (play/stop/tempo)</span>
+      <label class="toggle"><input type="checkbox" id="toggle-transport" checked><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span class="name">Mixer sync (volume/pan/mute)</span>
+      <label class="toggle"><input type="checkbox" id="toggle-mixer" checked><span class="slider"></span></label>
+    </div>
+    <div class="toggle-row">
+      <span class="name">Audio monitor (PCM stream)</span>
+      <label class="toggle"><input type="checkbox" id="toggle-audio"><span class="slider"></span></label>
+    </div>
+  </div>
+
+  <!-- Per-Track Overrides -->
+  <div class="panel">
+    <h2>Per-Track Mixer Sync</h2>
+    <div class="track-list" id="track-list">
+      <div style="color: #555; padding: 8px;">Waiting for track data...</div>
+    </div>
+  </div>
+
+  <!-- Transport -->
+  <div class="panel">
+    <h2>Transport</h2>
+    <div class="kv"><span class="label">Tempo</span><span class="value" id="tempo">--</span></div>
+    <div class="kv"><span class="label">Playing</span><span class="value" id="playing">--</span></div>
+    <div class="kv"><span class="label">Local Cursor</span><span class="value" id="local-cursor">--</span></div>
+  </div>
+
+  <!-- Recent Changes -->
+  <div class="panel full">
+    <h2>Recent Changes</h2>
+    <div class="change-log" id="change-log">
+      <div style="color: #555; padding: 8px;">No changes yet...</div>
+    </div>
+  </div>
+
+  <!-- Git History -->
+  <div class="panel full">
+    <h2>Git History</h2>
+    <div id="git-log" style="max-height: 200px; overflow-y: auto;">
+      <div style="color: #555; padding: 8px;">Loading...</div>
+    </div>
+    <div style="margin-top: 8px;">
+      <button class="btn" onclick="fetchGitLog()">Refresh</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  var ws = null;
+  var state = {};
+  var changeEntries = [];
+  var MAX_CHANGES = 200;
+
+  // --- WebSocket ---
+  function connect() {
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host);
+
+    ws.onopen = function() {
+      document.getElementById('ws-status').innerHTML = '<span class="dot on"></span> Connected';
+      fetchSyncState();
+      fetchGitLog();
+    };
+
+    ws.onclose = function() {
+      document.getElementById('ws-status').innerHTML = '<span class="dot off"></span> Disconnected';
+      setTimeout(connect, 2000);
+    };
+
+    ws.onerror = function() {};
+
+    ws.onmessage = function(evt) {
+      var msg;
+      try { msg = JSON.parse(evt.data); } catch(e) { return; }
+      handleMessage(msg);
+    };
+  }
+
+  function handleMessage(msg) {
+    if (msg.type === 'state') {
+      updateProducers(msg.producers);
+    }
+
+    if (msg.type === 'engine_sync_cursor') {
+      updatePartnerCursor(msg.data);
+    }
+
+    if (msg.type === 'engine_sync_param') {
+      addChangeEntry(msg.data.source, formatParamChange(msg.data.change));
+    }
+
+    if (msg.type === 'engine_sync_conflict') {
+      addChangeEntry('conflict', 'Both touched ' + msg.data.paramKey);
+    }
+
+    if (msg.type === 'engine_sync_change') {
+      addChangeEntry(msg.data.source, msg.data.text);
+    }
+
+    if (msg.type === 'engine_sync_config') {
+      updateToggles(msg.data);
+    }
+
+    if (msg.type === 'engine_rtt') {
+      if (msg.data.source === 'udp') document.getElementById('rtt-udp').textContent = msg.data.ms + 'ms';
+      if (msg.data.source === 'tcp') document.getElementById('rtt-tcp').textContent = msg.data.ms + 'ms';
+    }
+
+    if (msg.type === 'engine_connect') {
+      document.getElementById('peer-status').innerHTML = '<span class="dot on"></span> Peer';
+    }
+
+    if (msg.type === 'engine_disconnect') {
+      document.getElementById('peer-status').innerHTML = '<span class="dot off"></span> Peer';
+    }
+
+    if (msg.type === 'engine_sync_started') {
+      document.getElementById('ableton-status').innerHTML = '<span class="dot on"></span> Ableton';
+    }
+
+    if (msg.type === 'als_diff' || msg.type === 'engine_als_diff') {
+      addChangeEntry('system', 'ALS diff: ' + (msg.data ? msg.data.summary || (msg.changes ? msg.changes.length + ' changes' : '') : ''));
+    }
+
+    if (msg.type === 'engine_git_commit' || msg.type === 'git_commit') {
+      var d = msg.data || msg;
+      addChangeEntry('system', 'Git: ' + (d.message || d.subject || d.hash || '').split('\n')[0]);
+      fetchGitLog();
+    }
+  }
+
+  // --- UI Updates ---
+  function updateProducers(producers) {
+    if (producers.partner) {
+      document.getElementById('partner-ip').textContent = producers.partner.label || producers.partner.userId || '--';
+      if (producers.partner.online) {
+        document.getElementById('peer-status').innerHTML = '<span class="dot on"></span> Peer';
+      }
+    }
+  }
+
+  function updatePartnerCursor(data) {
+    if (!data) return;
+    document.getElementById('partner-track').textContent = data.track !== undefined ? 'Track ' + data.track : '--';
+    document.getElementById('partner-scene').textContent = data.scene !== undefined ? 'Scene ' + data.scene : '--';
+    highlightTrack(data.track, 'partner');
+  }
+
+  function highlightTrack(trackIdx, source) {
+    var items = document.querySelectorAll('.track-item');
+    items.forEach(function(el) {
+      if (source === 'partner') el.classList.remove('partner-cursor');
+    });
+    if (trackIdx >= 0 && trackIdx < items.length) {
+      items[trackIdx].classList.add(source + '-cursor');
+    }
+  }
+
+  function updateToggles(config) {
+    if (!config) return;
+    document.getElementById('toggle-cursor').checked = config.cursor;
+    document.getElementById('toggle-transport').checked = config.transport;
+    document.getElementById('toggle-mixer').checked = config.mixer;
+    document.getElementById('toggle-audio').checked = config.audioMonitor;
+  }
+
+  function renderTracks(tracks) {
+    var container = document.getElementById('track-list');
+    if (!tracks || tracks.length === 0) {
+      container.innerHTML = '<div style="color: #555; padding: 8px;">No tracks loaded</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < tracks.length; i++) {
+      var t = tracks[i];
+      html += '<div class="track-item" data-idx="' + i + '">';
+      html += '<span class="idx">' + i + '</span>';
+      html += '<span class="name">' + (t.name || 'Track ' + (i + 1)) + '</span>';
+      html += '<label class="toggle"><input type="checkbox" data-track="' + i + '" onchange="toggleTrackSync(this)" checked><span class="slider"></span></label>';
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  }
+
+  function formatParamChange(change) {
+    if (!change) return '';
+    var target = change.track === -1 ? 'Transport' : 'Track ' + change.track;
+    if (typeof change.value === 'boolean') return target + ' ' + change.param + ': ' + (change.value ? 'ON' : 'OFF');
+    if (typeof change.value === 'number') return target + ' ' + change.param + ': ' + change.value.toFixed(2);
+    return target + ' ' + change.param + ' changed';
+  }
+
+  function addChangeEntry(source, text) {
+    var now = new Date();
+    var time = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0');
+
+    changeEntries.push({ time: time, source: source, text: text });
+    if (changeEntries.length > MAX_CHANGES) changeEntries.shift();
+
+    var container = document.getElementById('change-log');
+    var html = '';
+    for (var i = changeEntries.length - 1; i >= Math.max(0, changeEntries.length - 50); i--) {
+      var e = changeEntries[i];
+      html += '<div class="change-entry">';
+      html += '<span class="time">' + e.time + '</span>';
+      html += '<span class="src ' + e.source + '">' + e.source + '</span>';
+      html += '<span class="text">' + escapeHtml(e.text) + '</span>';
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // --- API Calls ---
+  function fetchSyncState() {
+    fetch('/api/sync/state').then(function(r) { return r.json(); }).then(function(data) {
+      if (data.error) return;
+      state = data;
+
+      if (data.abletonConnected) {
+        document.getElementById('ableton-status').innerHTML = '<span class="dot on"></span> Ableton';
+      }
+      if (data.peerConnected) {
+        document.getElementById('peer-status').innerHTML = '<span class="dot on"></span> Peer';
+        document.getElementById('partner-ip').textContent = data.peerIp || '--';
+      }
+      if (data.config) updateToggles(data.config);
+      if (data.partnerCursor) updatePartnerCursor(data.partnerCursor);
+      if (data.localCursor) {
+        document.getElementById('local-cursor').textContent = 'Track ' + data.localCursor.track + ', Scene ' + data.localCursor.scene;
+      }
+      if (data.snapshot) {
+        if (data.snapshot.transport) {
+          document.getElementById('tempo').textContent = (data.snapshot.transport.tempo || 120).toFixed(1) + ' BPM';
+          document.getElementById('playing').textContent = data.snapshot.transport.playing ? 'Playing' : 'Stopped';
+        }
+        if (data.snapshot.tracks) renderTracks(data.snapshot.tracks);
+      }
+      if (data.changeLog) {
+        data.changeLog.forEach(function(entry) {
+          addChangeEntry(entry.source, entry.text);
+        });
+      }
+    }).catch(function() {});
+  }
+
+  window.fetchGitLog = function() {
+    fetch('/api/git/log').then(function(r) { return r.json(); }).then(function(data) {
+      var container = document.getElementById('git-log');
+      if (!data.entries || data.entries.length === 0) {
+        container.innerHTML = '<div style="color: #555; padding: 8px;">No commits yet</div>';
+        return;
+      }
+      var html = '';
+      for (var i = 0; i < Math.min(data.entries.length, 20); i++) {
+        var e = data.entries[i];
+        html += '<div class="git-entry">';
+        html += '<span class="hash">' + (e.hash || '').substring(0, 7) + '</span>';
+        html += '<div class="msg">' + escapeHtml(e.message || e.subject || '') + '</div>';
+        html += '</div>';
+      }
+      container.innerHTML = html;
+    }).catch(function() {});
+  };
+
+  // --- Toggle Handlers ---
+  function sendConfig(key, value) {
+    var body = {};
+    body[key] = value;
+    fetch('/api/sync/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).catch(function() {});
+  }
+
+  document.getElementById('toggle-cursor').addEventListener('change', function() { sendConfig('cursor', this.checked); });
+  document.getElementById('toggle-transport').addEventListener('change', function() { sendConfig('transport', this.checked); });
+  document.getElementById('toggle-mixer').addEventListener('change', function() { sendConfig('mixer', this.checked); });
+  document.getElementById('toggle-audio').addEventListener('change', function() {
+    fetch('/api/sync/audio-toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: this.checked })
+    }).catch(function() {});
+  });
+
+  window.toggleTrackSync = function(el) {
+    var trackIndex = parseInt(el.getAttribute('data-track'));
+    fetch('/api/sync/track/' + trackIndex, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mixer: el.checked })
+    }).catch(function() {});
+  };
+
+  // Refresh sync state periodically
+  setInterval(function() {
+    if (ws && ws.readyState === 1) {
+      fetch('/api/sync/state').then(function(r) { return r.json(); }).then(function(data) {
+        if (data.snapshot && data.snapshot.transport) {
+          document.getElementById('tempo').textContent = (data.snapshot.transport.tempo || 120).toFixed(1) + ' BPM';
+          document.getElementById('playing').textContent = data.snapshot.transport.playing ? 'Playing' : 'Stopped';
+        }
+        if (data.localCursor) {
+          document.getElementById('local-cursor').textContent = 'Track ' + data.localCursor.track + ', Scene ' + data.localCursor.scene;
+        }
+        if (data.abletonConnected) {
+          document.getElementById('ableton-status').innerHTML = '<span class="dot on"></span> Ableton';
+        } else {
+          document.getElementById('ableton-status').innerHTML = '<span class="dot off"></span> Ableton';
+        }
+      }).catch(function() {});
+    }
+  }, 3000);
+
+  // Start
+  connect();
+})();
+</script>
+</body>
+</html>

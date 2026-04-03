@@ -794,6 +794,8 @@ if (PROJECT_PATH || PEER_IP) {
     'git_commit', 'git_push', 'git_error',
     'asset_missing', 'peer_manifest', 'file_received', 'file_changed',
     'backpressure', 'timeout', 'reconnecting', 'buffer_adjusted',
+    'sync_started', 'sync_param', 'sync_cursor', 'sync_conflict',
+    'sync_config', 'sync_change',
     'error'
   ];
   engineEvents.forEach(evt => {
@@ -887,6 +889,87 @@ server.on('request', (req, res) => {
     if (engine) engine.ping();
     res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
     res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // ─── Sync Controller endpoints ──────────────────────────────────────────
+
+  if (req.method === 'GET' && req.url === '/api/sync/state') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+    res.end(JSON.stringify(engine && engine.sync ? engine.sync.getFullState() : { error: 'sync not initialized' }));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/sync/config') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        if (!engine || !engine.sync) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'sync not initialized' }));
+        }
+        const config = JSON.parse(body);
+        const result = engine.sync.setConfig(config);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true, config: result }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && /^\/api\/sync\/track\/(\d+)$/.test(req.url)) {
+    const trackIndex = parseInt(req.url.match(/\/api\/sync\/track\/(\d+)/)[1]);
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        if (!engine || !engine.sync) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'sync not initialized' }));
+        }
+        const overrides = JSON.parse(body);
+        engine.sync.setTrackOverride(trackIndex, overrides);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true, trackIndex, overrides }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/sync/audio-toggle') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        if (!engine || !engine.sync) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'sync not initialized' }));
+        }
+        const { enabled } = JSON.parse(body);
+        engine.sync.setAudioMonitor(enabled);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true, audioMonitor: enabled }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/dashboard') {
+    fs.readFile(path.join(__dirname, 'dashboard.html'), (err, html) => {
+      if (err) { res.writeHead(500); return res.end('Cannot read dashboard.html'); }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(html);
+    });
     return;
   }
 

@@ -29,6 +29,7 @@ var pcm = require('./pcm-stream');
 var AlsDiffer = require('./als-differ');
 var AlsGit = require('./als-git');
 var AssetResolver = require('./asset-resolver');
+var SyncController = require('./sync-controller');
 var C = require('../shared/constants');
 var protocol = require('../shared/protocol');
 
@@ -97,6 +98,16 @@ function CoLabEngine(options) {
 
   this._audioSenders = {}; // channelId → PcmSender
 
+  // --- AbletonBridge LiveSync ---
+  this._syncEnabled = options.syncEnabled !== false;
+  this._syncOptions = {
+    userId: options.userId || 'local',
+    abletonHost: options.abletonHost || '127.0.0.1',
+    abletonPort: options.abletonPort || C.ABLETON_BRIDGE_PORT,
+    abletonUdpPort: options.abletonUdpPort || C.ABLETON_BRIDGE_UDP_PORT
+  };
+  this.sync = null; // initialized in start()
+
   // --- OneDrive watcher ---
   this._oneDriveEnabled = options.oneDriveSync !== false;
   this._conflictAlert = options.conflictAlert !== false;
@@ -147,6 +158,26 @@ CoLabEngine.prototype.start = function(callback) {
       self._startAlsWatcher();
       self._startGitWatcher();
       if (self.projectPath) self.assets.setProjectPath(self.projectPath);
+
+      // Start AbletonBridge LiveSync (non-blocking — connects to Ableton in background)
+      if (self._syncEnabled) {
+        self.sync = new SyncController(self, self._syncOptions);
+        self.sync.start(function(syncErr) {
+          if (syncErr) {
+            self._emit('error', { source: 'sync', error: syncErr.message });
+          } else {
+            self._emit('sync_started');
+          }
+        });
+
+        // Forward sync events to engine event bus
+        self.sync.on('param_change', function(data) { self._emit('sync_param', data); });
+        self.sync.on('partner_cursor', function(data) { self._emit('sync_cursor', data); });
+        self.sync.on('conflict', function(data) { self._emit('sync_conflict', data); });
+        self.sync.on('config_changed', function(data) { self._emit('sync_config', data); });
+        self.sync.on('change_logged', function(data) { self._emit('sync_change', data); });
+      }
+
       self._emit('started', { errors: errors });
       if (callback) { var cb = callback; callback = null; cb(errors.length > 0 ? errors[0] : null); }
     }
@@ -205,6 +236,9 @@ CoLabEngine.prototype.stop = function() {
   if (this._alsWatcher) { this._alsWatcher.close(); this._alsWatcher = null; }
   if (this._oneDriveWatcher) { this._oneDriveWatcher.close(); this._oneDriveWatcher = null; }
   if (this._oneDrivePollTimer) { clearInterval(this._oneDrivePollTimer); this._oneDrivePollTimer = null; }
+
+  // Stop sync
+  if (this.sync) { this.sync.stop(); this.sync = null; }
 
   // Stop subsystems
   this.git.destroy();
@@ -621,7 +655,8 @@ CoLabEngine.prototype.getStats = function() {
       enabled: this._oneDriveEnabled,
       watching: !!this._oneDriveWatcher,
       knownConflicts: Object.keys(this._knownConflicts).length
-    }
+    },
+    sync: this.sync ? this.sync.getFullState() : null
   };
 };
 

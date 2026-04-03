@@ -7,6 +7,8 @@ exports.STATE_PORT = 4243;
 exports.AUDIO_PORT_BASE = 4244;
 exports.DATA_PORT = 4253;        // LAN Transport reliable channel (UDP)
 exports.TCP_PORT = 4260;         // TCP/IP stack primary port
+exports.ABLETON_BRIDGE_PORT = 9877;  // AbletonBridge Remote Script TCP
+exports.ABLETON_BRIDGE_UDP_PORT = 9882; // AbletonBridge fire-and-forget UDP
 
 // Packet types
 exports.PKT = {
