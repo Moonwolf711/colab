@@ -53,7 +53,18 @@ function ParamSync(abletonClient, engine, options) {
   this._noteCache = {};        // { 'T:C': [notes] }
   this._autoSnapshot = {};     // { 'T:C:P': pointsHash }
 
-  // Echo suppression
+  // ======================================================================
+  // ECHO GUARD — ABSOLUTE RULE: NO ECHO LOOPS EVER
+  // When a remote delta is received and applied, the affected slot is
+  // LOCKED for 5 seconds. During lock, NO outgoing deltas are sent
+  // for that slot. This is checked by _isLocked() before ANY send.
+  // The lock covers ALL operation types on that slot (create/delete/
+  // fire/stop/notes/params). This is the ONLY echo prevention needed.
+  // ======================================================================
+  this._echoLock = {};        // { slotKey: unlockTimestamp }
+  this._ECHO_LOCK_MS = 5000;  // 5 second hard lock after remote apply
+
+  // Legacy suppression (mixer params — kept for backward compat)
   this._recentRemoteApply = {};
   this._recentLocalChange = {};
 
@@ -335,37 +346,28 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
           var oldClipInfo = oldSlot.clip || {};
           var key = trackIdx + ':' + c;
 
+          // ECHO GUARD: skip if this slot is locked
+          if (self._isLocked(self._clipSlotKey(trackIdx, c))) continue;
+
           if (hasClip && !hadClip) {
-            var createKey = 'clip:' + key + ':create';
-            if (!self._isSuppressed(createKey, now)) {
-              self._fetchAndSendClipCreate(trackIdx, c, clipInfo);
-            }
+            self._fetchAndSendClipCreate(trackIdx, c, clipInfo);
           }
 
           if (!hasClip && hadClip) {
-            var deleteKey = 'clip:' + key + ':delete';
-            if (!self._isSuppressed(deleteKey, now)) {
-              self._engine.sendSyncDelta('clip_op', {
-                op: 'delete', track: trackIdx, clip: c
-              });
-              self._emit('local_change', {
-                track: trackIdx, param: 'clip_delete',
-                oldValue: oldClipInfo.name || ('Clip ' + c), newValue: null, timestamp: now
-              });
-            }
+            self._engine.sendSyncDelta('clip_op', { op: 'delete', track: trackIdx, clip: c });
+            self._emit('local_change', {
+              track: trackIdx, param: 'clip_delete',
+              oldValue: oldClipInfo.name || ('Clip ' + c), newValue: null, timestamp: now
+            });
           }
 
           if (hasClip && hadClip && clipInfo.is_playing !== oldClipInfo.is_playing) {
-            var stateKey = 'clip:' + key + ':state';
-            if (!self._isSuppressed(stateKey, now)) {
-              var op = clipInfo.is_playing ? 'fire' : 'stop';
-              self._engine.sendSyncDelta('clip_op', {
-                op: op, track: trackIdx, clip: c
-              });
-              self._emit('local_change', {
-                track: trackIdx, param: 'clip_' + op,
-                oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now
-              });
+            var op = clipInfo.is_playing ? 'fire' : 'stop';
+            self._engine.sendSyncDelta('clip_op', { op: op, track: trackIdx, clip: c });
+            self._emit('local_change', {
+              track: trackIdx, param: 'clip_' + op,
+              oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now
+            });
             }
           }
         }
@@ -423,23 +425,21 @@ ParamSync.prototype._pollTrackClips = function(t) {
       var clipInfo = slot.clip || {};
       var key = t + ':' + c;
 
+      // ECHO GUARD: if this slot is locked (remote change recently applied), skip ALL checks
+      var slotKey = self._clipSlotKey(t, c);
+      if (self._isLocked(slotKey)) continue;
+
       // New clip created
       if (hasClip && !hadClip) {
-        var createKey = 'clip:' + key + ':create';
-        if (!self._isSuppressed(createKey, now)) {
-          console.log('[param-sync] CLIP WATCH: new clip T' + t + ':C' + c);
-          self._fetchAndSendClipCreate(t, c, clipInfo);
-        }
+        console.log('[param-sync] CLIP WATCH: new clip T' + t + ':C' + c);
+        self._fetchAndSendClipCreate(t, c, clipInfo);
       }
 
       // Clip deleted
       if (!hasClip && hadClip) {
-        var deleteKey = 'clip:' + key + ':delete';
-        if (!self._isSuppressed(deleteKey, now)) {
-          console.log('[param-sync] CLIP WATCH: deleted T' + t + ':C' + c);
-          self._engine.sendSyncDelta('clip_op', { op: 'delete', track: t, clip: c });
-          self._emit('local_change', { track: t, param: 'clip_delete', oldValue: 'clip', newValue: null, timestamp: now });
-        }
+        console.log('[param-sync] CLIP WATCH: deleted T' + t + ':C' + c);
+        self._engine.sendSyncDelta('clip_op', { op: 'delete', track: t, clip: c });
+        self._emit('local_change', { track: t, param: 'clip_delete', oldValue: 'clip', newValue: null, timestamp: now });
       }
 
       if (hasClip && hadClip) {
@@ -448,21 +448,15 @@ ParamSync.prototype._pollTrackClips = function(t) {
 
         // Clip fire/stop
         if (clipInfo.is_playing !== oldPlaying) {
-          var stateKey = 'clip:' + key + ':state';
-          if (!self._isSuppressed(stateKey, now)) {
-            var op = clipInfo.is_playing ? 'fire' : 'stop';
-            self._engine.sendSyncDelta('clip_op', { op: op, track: t, clip: c });
-            self._emit('local_change', { track: t, param: 'clip_' + op, oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now });
-          }
+          var op = clipInfo.is_playing ? 'fire' : 'stop';
+          self._engine.sendSyncDelta('clip_op', { op: op, track: t, clip: c });
+          self._emit('local_change', { track: t, param: 'clip_' + op, oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now });
         }
 
         // Clip replaced (different length = delete+create happened between scans)
         if (clipInfo.length !== oldLength && oldLength) {
-          var replaceKey = 'clip:' + key + ':create';
-          if (!self._isSuppressed(replaceKey, now)) {
-            console.log('[param-sync] CLIP WATCH: clip replaced T' + t + ':C' + c + ' (len ' + oldLength + '→' + clipInfo.length + ')');
-            self._fetchAndSendClipCreate(t, c, clipInfo);
-          }
+          console.log('[param-sync] CLIP WATCH: clip replaced T' + t + ':C' + c + ' (len ' + oldLength + '→' + clipInfo.length + ')');
+          self._fetchAndSendClipCreate(t, c, clipInfo);
         }
       }
     }
@@ -869,8 +863,17 @@ ParamSync.prototype._applyRemoteClipOp = function(payload, now) {
   var t = payload.track, c = payload.clip, op = payload.op;
   console.log('[param-sync] APPLY CLIP OP: T' + t + ':C' + c + ' op=' + op);
 
-  var suppressKey = 'clip:' + t + ':' + c + ':' + (op === 'fire' || op === 'stop' ? 'state' : op);
-  this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
+  // ECHO GUARD: hard lock this clip slot
+  this._lockSlot(this._clipSlotKey(t, c));
+
+  // Also update clipWatchSnapshot so the watch doesn't re-detect this change
+  if (this._clipWatchSnapshot[t]) {
+    var snapSlot = this._clipWatchSnapshot[t][c];
+    if (snapSlot) {
+      if (op === 'delete') { snapSlot.has_clip = false; snapSlot.clip = null; }
+      if (op === 'create') { snapSlot.has_clip = true; snapSlot.clip = { name: payload.name || '', length: payload.length || 4 }; }
+    }
+  }
 
   var p;
   if (op === 'create') p = this._writeClient.createClip(t, c, payload.length || 4);
@@ -899,11 +902,8 @@ ParamSync.prototype._applyRemoteClipCreateFull = function(payload, now) {
   console.log('[param-sync] APPLY CLIP CREATE FULL: T' + t + ':C' + c +
     ' len=' + (payload.length || 4) + ' notes=' + notes.length + ' devices=' + devices.length);
 
-  var suppressKey = 'clip:' + t + ':' + c + ':create';
-  this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
-  // Also suppress notes so we don't re-send what we just received
-  var noteKey = 'notes:' + t + ':' + c;
-  this._recentRemoteApply[noteKey] = now + ECHO_SUPPRESS_MS;
+  // ECHO GUARD: hard lock this clip slot
+  this._lockSlot(this._clipSlotKey(t, c));
 
   var self = this;
   this._applyingCount++;
@@ -1037,6 +1037,31 @@ ParamSync.prototype._applyRemoteAutomation = function(payload, now) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ======================================================================
+// ECHO GUARD — hard lock/check
+// ======================================================================
+
+/** Lock a slot after applying a remote change. NO outgoing deltas for this slot. */
+ParamSync.prototype._lockSlot = function(slotKey) {
+  this._echoLock[slotKey] = Date.now() + this._ECHO_LOCK_MS;
+};
+
+/** Check if a slot is locked (remote change was recently applied). */
+ParamSync.prototype._isLocked = function(slotKey) {
+  var until = this._echoLock[slotKey];
+  return until && Date.now() < until;
+};
+
+/** Build slot key for a clip: "clip:T:C" */
+ParamSync.prototype._clipSlotKey = function(trackIdx, clipIdx) {
+  return 'clip:' + trackIdx + ':' + clipIdx;
+};
+
+/** Build slot key for a device: "dev:T" */
+ParamSync.prototype._devSlotKey = function(trackIdx) {
+  return 'dev:' + trackIdx;
+};
+
 /** Build a fingerprint string of device names for quick comparison */
 ParamSync.prototype._deviceNames = function(devList) {
   var names = [];
@@ -1103,6 +1128,11 @@ ParamSync.prototype._cleanupSuppression = function() {
   keys = Object.keys(this._recentLocalChange);
   for (var j = 0; j < keys.length; j++) {
     if ((now - this._recentLocalChange[keys[j]]) > CONFLICT_WINDOW_MS * 2) delete this._recentLocalChange[keys[j]];
+  }
+  // Clean expired echo locks
+  keys = Object.keys(this._echoLock);
+  for (var k = 0; k < keys.length; k++) {
+    if (this._echoLock[keys[k]] < now) delete this._echoLock[keys[k]];
   }
 };
 
