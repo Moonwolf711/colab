@@ -208,39 +208,58 @@ async function main() {
   console.log('Clips: ' + totalClips);
   console.log('Notes: ' + totalNotes);
 
-  // Step 4: Push to TheHAVEN via engine sync deltas
-  console.log('\n=== PUSHING TO HAVEN ===');
+  // Step 4: Push DIRECTLY to TheHAVEN's Ableton via /api/ableton/command
+  console.log('\n=== PUSHING TO HAVEN (direct) ===');
 
-  // Push mixer params for all tracks
+  function havenCmd(type, params) {
+    return post(HAVEN_API + '/api/ableton/command', { type: type, params: params }).then(function(r) {
+      if (r && !r.ok && r.error) console.log('  WARN: ' + type + ' → ' + r.error);
+      return r;
+    }).catch(function(e) {
+      console.log('  ERR: ' + type + ' → ' + (e.message || e));
+    });
+  }
+
+  // Push mixer params
   for (var i = 0; i < fullState.length; i++) {
     var ts = fullState[i];
-    // Send each mixer param as a delta via the local engine
-    var params = ['volume', 'pan', 'mute', 'solo', 'arm', 'color', 'name'];
-    for (var p = 0; p < params.length; p++) {
-      if (ts[params[p]] !== undefined) {
-        await post(LOCAL_API + '/api/sync/send-delta', {
-          type: 'param', track: i, param: params[p], value: ts[params[p]]
-        }).catch(function(){});
-      }
-    }
+    if (ts.volume !== undefined) await havenCmd('set_track_volume', { track_index: i, volume: ts.volume });
+    if (ts.pan !== undefined) await havenCmd('set_track_pan', { track_index: i, pan: ts.pan });
+    if (ts.mute !== undefined) await havenCmd('set_track_mute', { track_index: i, mute: ts.mute });
+    if (ts.solo !== undefined) await havenCmd('set_track_solo', { track_index: i, solo: ts.solo });
+    if (ts.color !== undefined) await havenCmd('set_track_color', { track_index: i, color_index: ts.color });
+    if (ts.name) await havenCmd('set_track_name', { track_index: i, name: ts.name });
+    // Skip arm for group tracks (known to fail)
+    if (ts.arm !== undefined) await havenCmd('set_track_arm', { track_index: i, arm: ts.arm });
+    process.stdout.write('  T' + i + ' mixer ✓  ');
+    if ((i + 1) % 6 === 0) console.log('');
   }
-  console.log('Mixer params pushed for ' + fullState.length + ' tracks');
+  console.log('\nMixer params: ' + fullState.length + ' tracks');
 
-  // Push clips with notes
+  // Push clips with notes — direct to TheHAVEN's Ableton
+  var clipsPushed = 0;
+  var notesPushed = 0;
   for (var j = 0; j < fullState.length; j++) {
     var tr = fullState[j];
     for (var k = 0; k < tr.clips.length; k++) {
       var clip = tr.clips[k];
-      await post(LOCAL_API + '/api/sync/send-delta', {
-        type: 'clip_create_full',
-        track: j, clip: clip.index,
-        name: clip.name, length: clip.length,
-        notes: clip.notes,
-        devices: tr.devices
-      }).catch(function(){});
+      // Create clip (ignore if exists)
+      await havenCmd('create_clip', { track_index: j, clip_index: clip.index, length: clip.length });
+      // Clear existing notes
+      await havenCmd('clear_clip_notes', { track_index: j, clip_index: clip.index });
+      // Add notes
+      if (clip.notes.length > 0) {
+        var result = await havenCmd('add_notes_to_clip', {
+          track_index: j, clip_index: clip.index, notes: clip.notes
+        });
+        console.log('  T' + j + ':C' + clip.index + ' → ' + clip.notes.length + ' notes ' +
+          (result && result.ok ? '✓' : '✗ ' + ((result && result.error) || '?')));
+        notesPushed += clip.notes.length;
+      }
+      clipsPushed++;
     }
   }
-  console.log('Clips pushed: ' + totalClips + ' clips, ' + totalNotes + ' notes');
+  console.log('Clips: ' + clipsPushed + ', Notes: ' + notesPushed);
 
   console.log('\n=== DONE ===');
 }

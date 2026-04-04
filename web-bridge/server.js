@@ -923,6 +923,33 @@ server.on('request', (req, res) => {
     return;
   }
 
+  // Send a raw command to this machine's Ableton via the writeClient
+  if (req.method === 'POST' && req.url === '/api/ableton/command') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        if (!engine || !engine.sync) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'sync not initialized' }));
+        }
+        const { type, params } = JSON.parse(body);
+        const client = engine.sync.getClient(); // use the write client for commands
+        client.send(type, params || {}).then(result => {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: true, result }));
+        }).catch(err => {
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          res.end(JSON.stringify({ ok: false, error: err.message }));
+        });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // Inject a sync delta directly into the engine (for full-sync-push script)
   if (req.method === 'POST' && req.url === '/api/sync/send-delta') {
     let body = '';
