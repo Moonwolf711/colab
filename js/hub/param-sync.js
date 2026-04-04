@@ -527,19 +527,33 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
 ParamSync.prototype._pollDeep = function() {
   if (!this._canPoll()) return;
 
-  // Device params on focused track
-  var t = this._focusedTrack;
-  if (t >= 0 && t < this._trackCount && this._layerEnabled.devices) {
-    this._pollDeviceParams(t);
-  }
+  // Device params: sweep ALL tracks with devices (rotate 1 per cycle at 4Hz)
+  if (this._layerEnabled.devices) this._pollDeviceParamsRotation();
 
   // Note polling: rotate through ALL tracks that have clips
   if (this._layerEnabled.notes) this._pollNotesRotation();
 
   // Automation on focused clip only
+  var t = this._focusedTrack;
   if (this._layerEnabled.automation && t >= 0 && t < this._trackCount && this._focusedClip >= 0) {
     this._pollClipAutomation(t, this._focusedClip);
   }
+};
+
+/**
+ * Rotate through ALL tracks that have devices, polling params.
+ * 1 track per cycle at 4Hz. Echo guard skips locked tracks.
+ */
+ParamSync.prototype._pollDeviceParamsRotation = function() {
+  var trackKeys = Object.keys(this._deviceListSnapshot);
+  if (trackKeys.length === 0) return;
+  if (!this._devParamScanIndex) this._devParamScanIndex = 0;
+
+  var idx = this._devParamScanIndex % trackKeys.length;
+  this._devParamScanIndex = (this._devParamScanIndex + 1) % trackKeys.length;
+  var trackIdx = Number(trackKeys[idx]);
+
+  this._pollDeviceParams(trackIdx);
 };
 
 /**
@@ -575,7 +589,7 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
   var maxDevices = Math.min(deviceList.length, 4);
   for (var d = 0; d < maxDevices; d++) {
     (function(devIdx) {
-      self._client.getDeviceParameters(trackIdx, devIdx).then(function(result) {
+      self._clipClient.getDeviceParameters(trackIdx, devIdx).then(function(result) {
         var params = Array.isArray(result) ? result : (result && result.parameters ? result.parameters : []);
         var now = Date.now();
         var snapKey = trackIdx + ':' + devIdx;
