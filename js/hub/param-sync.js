@@ -282,7 +282,8 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
       }
 
       // Only diff after warmup AND when we have a previous snapshot
-      if (!warmup && oldDevList) {
+      // ECHO GUARD: skip if device slot is locked
+      if (!warmup && oldDevList && !self._isLocked(self._devSlotKey(trackIdx))) {
         var oldNames = self._deviceNames(oldDevList);
         var newNames = self._deviceNames(newDevList);
 
@@ -565,6 +566,8 @@ ParamSync.prototype._pollNotesRotation = function() {
 
 ParamSync.prototype._pollDeviceParams = function(trackIdx) {
   var self = this;
+  // ECHO GUARD: skip if device slot is locked
+  if (this._isLocked(this._devSlotKey(trackIdx))) return;
   var deviceList = this._deviceListSnapshot[trackIdx];
   if (!deviceList || deviceList.length === 0) return;
 
@@ -819,8 +822,8 @@ ParamSync.prototype._applyRemoteDeviceParam = function(payload, now) {
   var t = payload.track, d = payload.device, pName = payload.param_name, val = payload.value;
   console.log('[param-sync] APPLY DEVICE PARAM: T' + t + ':D' + d + ':' + pName + ' = ' + val);
 
-  var paramKey = 'dp:' + t + ':' + d + ':' + pName;
-  this._recentRemoteApply[paramKey] = now + ECHO_SUPPRESS_MS;
+  // ECHO GUARD: lock device slot
+  this._lockSlot(this._devSlotKey(t));
 
   // Update snapshot
   var snapKey = t + ':' + d;
@@ -985,9 +988,8 @@ ParamSync.prototype._applyRemoteDeviceOp = function(payload, now) {
   var devName = payload.device_name || '';
   console.log('[param-sync] APPLY DEVICE OP: T' + t + ' op=' + op + ' device=' + devName);
 
-  // Suppress key uses device name (stable) instead of index (shifts on add/remove)
-  var suppressKey = 'dev:' + t + ':' + (op === 'add' ? 'add' : 'rm') + ':' + devName;
-  this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
+  // ECHO GUARD: lock device slot
+  this._lockSlot(this._devSlotKey(t));
 
   // Check if device already exists on this track before trying to insert
   if (op === 'add' && devName) {
