@@ -491,15 +491,21 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
   console.log('[param-sync] CLIP CREATE: T' + trackIdx + ':C' + clipIdx +
     ' len=' + (clipInfo.length || 4) + ' devices=' + devices.length);
 
-  // Send create immediately — no waiting for notes
+  // Send via engine (for peers connected via UDP/TCP)
   this._engine.sendSyncDelta('clip_create_full', {
     track: trackIdx, clip: clipIdx,
     name: clipInfo.name || '', length: clipInfo.length || 4,
-    notes: [],  // empty — note poll will sync content separately
+    notes: [],
     devices: devices
   });
 
-  // Force the note snapshot to empty so the next note poll detects content
+  // ALSO push directly to HAVEN via HTTP (reliable, bypasses engine queue)
+  var self = this;
+  var peerIp = this._engine.peerIp;
+  if (peerIp) {
+    this._directClipPush(peerIp, trackIdx, clipIdx, clipInfo.length || 4);
+  }
+
   var key = trackIdx + ':' + clipIdx;
   this._noteSnapshot[key] = '';
   this._noteCache[key] = [];
@@ -508,6 +514,58 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
     track: trackIdx, param: 'clip_create',
     oldValue: null, newValue: clipInfo.name || ('Clip ' + clipIdx),
     timestamp: Date.now()
+  });
+};
+
+/**
+ * Direct HTTP push to peer's /api/ableton/command — guaranteed delivery.
+ * Creates the clip, then fetches local notes and pushes them.
+ */
+ParamSync.prototype._directClipPush = function(peerIp, trackIdx, clipIdx, length) {
+  var http = require('http');
+  var self = this;
+
+  function peerCmd(type, params) {
+    return new Promise(function(resolve, reject) {
+      var body = JSON.stringify({ type: type, params: params });
+      var req = http.request({
+        hostname: peerIp, port: 3030, path: '/api/ableton/command',
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      }, function(res) {
+        var chunks = [];
+        res.on('data', function(c) { chunks.push(c); });
+        res.on('end', function() {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch(e) { resolve({}); }
+        });
+      });
+      req.on('error', function(e) { resolve({ ok: false, error: e.message }); });
+      req.setTimeout(10000, function() { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+      req.write(body);
+      req.end();
+    });
+  }
+
+  // Step 1: Create clip on peer (ignore if exists)
+  peerCmd('create_clip', { track_index: trackIdx, clip_index: clipIdx, length: length }).then(function() {
+    // Step 2: Read notes from LOCAL Ableton via writeClient
+    return self._writeClient.send('get_clip_notes', {
+      track_index: trackIdx, clip_index: clipIdx,
+      start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
+    });
+  }).then(function(result) {
+    var notes = (result && result.notes) ? result.notes : [];
+    if (notes.length > 0) {
+      // Step 3: Clear + add notes on peer
+      return peerCmd('clear_clip_notes', { track_index: trackIdx, clip_index: clipIdx }).then(function() {
+        return peerCmd('add_notes_to_clip', { track_index: trackIdx, clip_index: clipIdx, notes: notes });
+      }).then(function() {
+        console.log('[param-sync] DIRECT PUSH OK: T' + trackIdx + ':C' + clipIdx + ' → ' + notes.length + ' notes');
+      });
+    } else {
+      console.log('[param-sync] DIRECT PUSH OK: T' + trackIdx + ':C' + clipIdx + ' (empty clip)');
+    }
+  }).catch(function(err) {
+    console.log('[param-sync] DIRECT PUSH FAILED: T' + trackIdx + ':C' + clipIdx + ' — ' + (err.message || err));
   });
 };
 
