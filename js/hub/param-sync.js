@@ -392,12 +392,6 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._pollFocusedClips = function() {
-  if (!this._clipWatchAlive) {
-    this._clipWatchAlive = true;
-    console.log('[clip-watch] ALIVE — enabled=' + this._enabled +
-      ' clipClient=' + (this._clipClient ? this._clipClient.isConnected() : 'null') +
-      ' clips=' + this._layerEnabled.clips + ' tracks=' + this._trackCount);
-  }
   if (!this._enabled) return;
   if (!this._clipClient || !this._clipClient.isConnected()) return;
   if (!this._layerEnabled.clips) return;
