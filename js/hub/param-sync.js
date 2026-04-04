@@ -329,14 +329,8 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
           if (hasClip && !hadClip) {
             var createKey = 'clip:' + key + ':create';
             if (!self._isSuppressed(createKey, now)) {
-              self._engine.sendSyncDelta('clip_op', {
-                op: 'create', track: trackIdx, clip: c,
-                name: clipInfo.name || '', length: clipInfo.length || 4
-              });
-              self._emit('local_change', {
-                track: trackIdx, param: 'clip_create', oldValue: null,
-                newValue: clipInfo.name || ('Clip ' + c), timestamp: now
-              });
+              // Fetch notes immediately and bundle with create
+              self._fetchAndSendClipCreate(trackIdx, c, clipInfo);
             }
           }
 
@@ -375,17 +369,91 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 };
 
 // ---------------------------------------------------------------------------
-// Tier 3: Deep polling (4Hz) — device params + notes + automation on focused track
+// Clip create + notes bundling
+// ---------------------------------------------------------------------------
+
+/**
+ * When a new clip is detected, fetch its notes and the track's device list,
+ * then send a create delta that includes everything the peer needs.
+ */
+ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipInfo) {
+  var self = this;
+  // Get notes (may be empty for a brand-new clip)
+  this._client.getClipNotes(trackIdx, clipIdx).then(function(result) {
+    var notes = (result && result.notes) ? result.notes : [];
+    // Also get the device list so peer knows what instrument is loaded
+    var devices = self._deviceListSnapshot[trackIdx] || [];
+    self._engine.sendSyncDelta('clip_create_full', {
+      track: trackIdx, clip: clipIdx,
+      name: clipInfo.name || '', length: clipInfo.length || 4,
+      notes: notes,
+      devices: devices
+    });
+    // Update note snapshot so we don't re-send on next poll
+    var key = trackIdx + ':' + clipIdx;
+    self._noteSnapshot[key] = self._hashNotes(notes);
+    self._noteCache[key] = notes;
+
+    self._emit('local_change', {
+      track: trackIdx, param: 'clip_create',
+      oldValue: null, newValue: (clipInfo.name || 'Clip') + ' (' + notes.length + ' notes)',
+      timestamp: Date.now()
+    });
+  }).catch(function() {
+    // Fallback: send create without notes
+    self._engine.sendSyncDelta('clip_op', {
+      op: 'create', track: trackIdx, clip: clipIdx,
+      name: clipInfo.name || '', length: clipInfo.length || 4
+    });
+    self._emit('local_change', {
+      track: trackIdx, param: 'clip_create', oldValue: null,
+      newValue: clipInfo.name || ('Clip ' + clipIdx), timestamp: Date.now()
+    });
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Tier 3: Deep polling (4Hz) — device params on focused track + notes on ALL clips
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._pollDeep = function() {
   if (!this._canPoll()) return;
-  var t = this._focusedTrack;
-  if (t < 0 || t >= this._trackCount) return;
 
-  if (this._layerEnabled.devices) this._pollDeviceParams(t);
-  if (this._layerEnabled.notes && this._focusedClip >= 0) this._pollClipNotes(t, this._focusedClip);
-  if (this._layerEnabled.automation && this._focusedClip >= 0) this._pollClipAutomation(t, this._focusedClip);
+  // Device params on focused track
+  var t = this._focusedTrack;
+  if (t >= 0 && t < this._trackCount && this._layerEnabled.devices) {
+    this._pollDeviceParams(t);
+  }
+
+  // Note polling: rotate through ALL tracks that have clips
+  if (this._layerEnabled.notes) this._pollNotesRotation();
+
+  // Automation on focused clip only
+  if (this._layerEnabled.automation && t >= 0 && t < this._trackCount && this._focusedClip >= 0) {
+    this._pollClipAutomation(t, this._focusedClip);
+  }
+};
+
+/**
+ * Rotate through tracks polling notes on any clip that exists.
+ * Polls 1 track per cycle at 4Hz → full rotation every ~8s for 33 tracks.
+ */
+ParamSync.prototype._pollNotesRotation = function() {
+  if (this._trackCount === 0) return;
+  if (!this._noteScanIndex) this._noteScanIndex = 0;
+
+  var trackIdx = this._noteScanIndex % this._trackCount;
+  this._noteScanIndex = (this._noteScanIndex + 1) % this._trackCount;
+
+  var clips = this._clipListSnapshot[trackIdx];
+  if (!clips) return;
+
+  for (var c = 0; c < clips.length; c++) {
+    if (clips[c] && clips[c].has_clip) {
+      this._pollClipNotes(trackIdx, c);
+      return; // only poll one clip per cycle to keep TCP load down
+    }
+  }
 };
 
 ParamSync.prototype._pollDeviceParams = function(trackIdx) {
@@ -566,6 +634,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'transport':   this._applyRemoteTransportPayload(payload, now); break;
     case 'device_param': this._applyRemoteDeviceParam(payload, now); break;
     case 'clip_notes':  this._applyRemoteClipNotes(payload, now); break;
+    case 'clip_create_full': this._applyRemoteClipCreateFull(payload, now); break;
     case 'clip_op':     this._applyRemoteClipOp(payload, now); break;
     case 'device_op':   this._applyRemoteDeviceOp(payload, now); break;
     case 'automation':  this._applyRemoteAutomation(payload, now); break;
@@ -708,6 +777,84 @@ ParamSync.prototype._applyRemoteClipOp = function(payload, now) {
   }
 
   this._emit('remote_change', { track: t, param: 'clip_' + op, value: payload, timestamp: now });
+};
+
+// --- Full clip create apply (create + notes + instrument) ---
+
+ParamSync.prototype._applyRemoteClipCreateFull = function(payload, now) {
+  var t = payload.track, c = payload.clip;
+  var notes = payload.notes || [];
+  var devices = payload.devices || [];
+  console.log('[param-sync] APPLY CLIP CREATE FULL: T' + t + ':C' + c +
+    ' len=' + (payload.length || 4) + ' notes=' + notes.length + ' devices=' + devices.length);
+
+  var suppressKey = 'clip:' + t + ':' + c + ':create';
+  this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
+  // Also suppress notes so we don't re-send what we just received
+  var noteKey = 'notes:' + t + ':' + c;
+  this._recentRemoteApply[noteKey] = now + ECHO_SUPPRESS_MS;
+
+  var self = this;
+  this._applyingCount++;
+
+  // Step 1: Check if we need to load the same instrument
+  var instrumentPromise = Promise.resolve();
+  if (devices.length > 0) {
+    var localDevices = this._deviceListSnapshot[t] || [];
+    var localNames = {};
+    for (var i = 0; i < localDevices.length; i++) localNames[localDevices[i].name] = true;
+    // Find first device from peer that we don't have (likely the instrument)
+    for (var d = 0; d < devices.length; d++) {
+      if (!localNames[devices[d].name] && devices[d].class_name) {
+        // Try to load this instrument by searching browser
+        (function(devName) {
+          instrumentPromise = self._writeClient.send('search_browser', {
+            query: devName, category: 'instruments'
+          }).then(function(searchResult) {
+            var results = searchResult.results || [];
+            if (results.length > 0 && results[0].uri) {
+              return self._writeClient.send('load_instrument_or_effect', {
+                track_index: t, uri: results[0].uri
+              });
+            }
+          }).catch(function(err) {
+            console.log('[param-sync] Instrument load failed for "' + devName + '": ' + (err.message || err));
+          });
+        })(devices[d].name);
+        break; // only load one instrument
+      }
+    }
+  }
+
+  // Step 2: Create clip
+  instrumentPromise.then(function() {
+    return self._writeClient.createClip(t, c, payload.length || 4);
+  }).then(function() {
+    // Step 3: Add notes if any
+    if (notes.length > 0) {
+      return self._writeClient.addNotesToClip(t, c, notes);
+    }
+  }).then(function() {
+    self._applyingCount = Math.max(0, self._applyingCount - 1);
+    // Update snapshot
+    if (notes.length > 0) {
+      var key = t + ':' + c;
+      self._noteSnapshot[key] = self._hashNotes(notes);
+      self._noteCache[key] = notes;
+    }
+    self._emit('remote_applied', {
+      track: t, param: 'clip_create_full',
+      value: 'clip + ' + notes.length + ' notes'
+    });
+  }).catch(function(err) {
+    self._applyingCount = Math.max(0, self._applyingCount - 1);
+    self._emit('remote_apply_error', {
+      track: t, param: 'clip_create_full',
+      error: err.message || String(err)
+    });
+  });
+
+  this._emit('remote_change', { track: t, param: 'clip_create_full', value: payload, timestamp: now });
 };
 
 // --- Device operation apply (add/remove) ---

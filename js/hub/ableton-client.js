@@ -519,6 +519,18 @@ AbletonClient.prototype.createClipAutomation = function(trackIndex, clipIndex, p
 };
 
 // ---------------------------------------------------------------------------
+// Browser / Instrument loading
+// ---------------------------------------------------------------------------
+
+AbletonClient.prototype.searchBrowser = function(query, category) {
+  return this.send('search_browser', { query: query, category: category || 'all' });
+};
+
+AbletonClient.prototype.loadInstrumentOrEffect = function(trackIndex, uri) {
+  return this.send('load_instrument_or_effect', { track_index: trackIndex, uri: uri });
+};
+
+// ---------------------------------------------------------------------------
 // Scene methods
 // ---------------------------------------------------------------------------
 
