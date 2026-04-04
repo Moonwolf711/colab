@@ -15,7 +15,9 @@ function init() {
     post("coLaB Hub v0.4.3 initializing...\n");
     readTracks();
     ready = true;
-    post("Ready. " + tracks.length + " tracks. Wire a [metro 100] → [poll] message → js for cursor tracking.\n");
+    // Auto-connect to TheHAVEN with correct IP
+    connect("192.168.0.83");
+    post("Ready. " + tracks.length + " tracks. Auto-connected to 192.168.0.83.\n");
 }
 
 function readTracks() {
@@ -73,6 +75,9 @@ function poll() {
 function connect(ip) {
     partnerHost = ip.toString();
     connected = true;
+    // Update udpsend target — outlet 0 sends "host <ip>" which udpsend interprets
+    outlet(0, "host", partnerHost);
+    outlet(0, "port", 8001);
     post("Connected to " + partnerHost + "\n");
 }
 
@@ -95,6 +100,19 @@ function incoming() {
             api.set(data.prop, data.value);
             post("REMOTE " + data.user + ": set " + data.path + " " + data.prop + "=" + data.value + "\n");
         }
+        else if (data.type === "sync" && data.diffs) {
+            // From web-bridge param sync → apply each diff via LiveAPI
+            for (var di = 0; di < data.diffs.length; di++) {
+                var diff = data.diffs[di];
+                if (diff.path && diff.prop !== undefined) {
+                    try {
+                        var api3 = new LiveAPI("live_set " + diff.path);
+                        api3.set(diff.prop, diff.value);
+                        post("SYNC " + diff.path + " " + diff.prop + "=" + diff.value + "\n");
+                    } catch(e2) { post("SYNC ERR: " + e2 + "\n"); }
+                }
+            }
+        }
         else if (data.type === "launch") {
             var api2 = new LiveAPI("live_set tracks " + data.track + " clip_slots " + data.scene);
             api2.call("fire");
@@ -109,6 +127,22 @@ function incoming() {
             else if (data.action === "stop") ls.call("stop_playing");
             else if (data.action === "tempo") ls.set("tempo", data.value);
             post("REMOTE " + data.user + ": " + data.action + "\n");
+        }
+        else if (data.type === "sound") {
+            // Partner wants to mute/unmute OUR session
+            var ls2 = new LiveAPI("live_set");
+            var tc = ls2.getcount("tracks");
+            if (data.action === "on") {
+                for (var si = 0; si < tc; si++) { new LiveAPI("live_set tracks " + si).set("mute", 0); }
+                post("REMOTE " + data.user + ": unmuted our session\n");
+            } else if (data.action === "off") {
+                for (var si2 = 0; si2 < tc; si2++) { new LiveAPI("live_set tracks " + si2).set("mute", 1); }
+                post("REMOTE " + data.user + ": muted our session\n");
+            } else if (data.action === "toggle") {
+                var m = parseInt(new LiveAPI("live_set tracks 0").get("mute"));
+                for (var si3 = 0; si3 < tc; si3++) { new LiveAPI("live_set tracks " + si3).set("mute", m ? 0 : 1); }
+                post("REMOTE " + data.user + ": toggled our session (" + (m ? "unmuted" : "muted") + ")\n");
+            }
         }
     } catch(e) {}
 }
@@ -158,11 +192,46 @@ function testnet() {
     outlet(0, "hello", "from", userId);
 }
 
-// Catch ANY message that arrives (debug)
+// Route UDP commands (udpreceive → prepend incoming → js)
 function anything() {
     var name = messagename;
     var a = arrayfromargs(arguments);
-    post("GOT MESSAGE: " + name + " " + a.join(" ") + "\n");
+    if (name === "incoming" || name === "/incoming") {
+        var raw = a.join(" ");
+        var cmd = raw.replace(/^\//, "");
+        if (cmd === "poll") { poll(); return; }
+        if (cmd === "init") { init(); return; }
+        if (cmd === "refresh") { refresh(); return; }
+        if (cmd === "sound_on") { sound_on(); return; }
+        if (cmd === "sound_off") { sound_off(); return; }
+        if (cmd === "sound_toggle") { sound_toggle(); return; }
+        if (cmd.indexOf("connect ") === 0) { connect(cmd.substring(8)); return; }
+        if (cmd === "disconnect") { disconnect(); return; }
+        if (cmd.indexOf("notify ") === 0) { post("NOTIFY: " + cmd.substring(7) + "\n"); return; }
+        if (raw.indexOf("{") >= 0) { incoming.apply(null, a); return; }
+        post("CMD: " + cmd + "\n");
+        return;
+    }
+    post("GOT: " + name + " " + a.join(" ") + "\n");
+}
+
+// Send sound on/off to PARTNER's session over the network
+function sound_on() {
+    if (!connected) { post("Not connected\n"); return; }
+    outlet(0, JSON.stringify({ type: "sound", action: "on", user: userId, ts: Date.now() }));
+    post(">> PARTNER SOUND ON\n");
+}
+
+function sound_off() {
+    if (!connected) { post("Not connected\n"); return; }
+    outlet(0, JSON.stringify({ type: "sound", action: "off", user: userId, ts: Date.now() }));
+    post(">> PARTNER SOUND OFF\n");
+}
+
+function sound_toggle() {
+    if (!connected) { post("Not connected\n"); return; }
+    outlet(0, JSON.stringify({ type: "sound", action: "toggle", user: userId, ts: Date.now() }));
+    post(">> PARTNER SOUND TOGGLE\n");
 }
 
 function dbg() {
