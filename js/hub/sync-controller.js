@@ -35,22 +35,26 @@ function SyncController(engine, options) {
   this._engine = engine;
   this._userId = options.userId || 'local';
 
-  // Create TWO AbletonClients — one for reads (polling), one for writes (applies)
-  // AbletonBridge Remote Script accepts multiple TCP connections
-  this._client = new AbletonClient({
+  // Create THREE AbletonClients — AbletonBridge accepts multiple TCP connections
+  //   _client:      mixer/transport polling (saturated at 16Hz)
+  //   _writeClient: applies remote changes + clip watch reads
+  //   _clipClient:  dedicated clip/note reads (never blocked)
+  var abletonOpts = {
     host: options.abletonHost || '127.0.0.1',
     port: options.abletonPort || C.ABLETON_BRIDGE_PORT,
     udpPort: options.abletonUdpPort || C.ABLETON_BRIDGE_UDP_PORT
-  });
-  this._writeClient = new AbletonClient({
-    host: options.abletonHost || '127.0.0.1',
-    port: options.abletonPort || C.ABLETON_BRIDGE_PORT,
-    udpPort: options.abletonUdpPort || C.ABLETON_BRIDGE_UDP_PORT
-  });
+  };
+  this._client = new AbletonClient(abletonOpts);
+  this._writeClient = new AbletonClient(abletonOpts);
+  this._clipClient = new AbletonClient(abletonOpts);
 
-  // Create sub-modules — polling uses _client, applies use _writeClient
+  // Create sub-modules
   this._cursorSync = new CursorSync(this._client, engine, { userId: this._userId });
-  this._paramSync = new ParamSync(this._client, engine, { userId: this._userId, writeClient: this._writeClient });
+  this._paramSync = new ParamSync(this._client, engine, {
+    userId: this._userId,
+    writeClient: this._writeClient,
+    clipClient: this._clipClient
+  });
 
   // Sync configuration
   this._config = this._loadPrefs() || JSON.parse(JSON.stringify(DEFAULT_CONFIG));
@@ -194,7 +198,8 @@ SyncController.prototype.start = function(callback) {
   // Connect both read and write clients
   Promise.all([
     this._client.connect(),
-    this._writeClient.connect()
+    this._writeClient.connect(),
+    this._clipClient.connect()
   ]).then(function() {
     self._started = true;
 
@@ -225,6 +230,7 @@ SyncController.prototype.stop = function() {
   this._paramSync.stop();
   this._client.disconnect();
   this._writeClient.disconnect();
+  this._clipClient.disconnect();
   this._logChange('system', 'LiveSync stopped');
   this._emit('stopped');
 };

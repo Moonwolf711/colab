@@ -29,6 +29,7 @@ function ParamSync(abletonClient, engine, options) {
   options = options || {};
   this._client = abletonClient;
   this._writeClient = options.writeClient || abletonClient;
+  this._clipClient = options.clipClient || options.writeClient || abletonClient;
   this._engine = engine;
   this._userId = options.userId || 'local';
 
@@ -396,7 +397,7 @@ ParamSync.prototype._pollFocusedClips = function() {
 ParamSync.prototype._pollTrackClips = function(t) {
   var self = this;
   // Use writeClient — the readClient is saturated by mixer polling
-  this._writeClient.send('get_track_info', { track_index: t }).then(function(result) {
+  this._clipClient.send('get_track_info', { track_index: t }).then(function(result) {
     var now = Date.now();
     var slots = result.clip_slots || [];
     var oldClipList = self._clipListSnapshot[t];
@@ -463,7 +464,7 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
   var self = this;
   // Get notes (may be empty for a brand-new clip)
   // Use _writeClient for notes fetch — _client's TCP queue is saturated by polling
-  this._writeClient.send('get_clip_notes', {
+  this._clipClient.send('get_clip_notes', {
     track_index: trackIdx, clip_index: clipIdx,
     start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
   }).then(function(result) {
@@ -591,7 +592,7 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
 ParamSync.prototype._pollClipNotes = function(trackIdx, clipIdx) {
   var self = this;
   // Use _writeClient to avoid saturating _client's poll queue
-  this._writeClient.send('get_clip_notes', {
+  this._clipClient.send('get_clip_notes', {
     track_index: trackIdx, clip_index: clipIdx,
     start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
   }).then(function(result) {
