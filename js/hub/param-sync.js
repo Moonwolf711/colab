@@ -347,7 +347,10 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
           var key = trackIdx + ':' + c;
 
           // ECHO GUARD: skip if this slot is locked
-          if (self._isLocked(self._clipSlotKey(trackIdx, c))) continue;
+          if (self._isLocked(self._clipSlotKey(trackIdx, c))) {
+            console.log('[echo-guard] Skipping outgoing clip delta T' + trackIdx + ':C' + c + ' — slot locked');
+            continue;
+          }
 
           if (hasClip && !hadClip) {
             self._fetchAndSendClipCreate(trackIdx, c, clipInfo);
@@ -427,7 +430,10 @@ ParamSync.prototype._pollTrackClips = function(t) {
 
       // ECHO GUARD: if this slot is locked (remote change recently applied), skip ALL checks
       var slotKey = self._clipSlotKey(t, c);
-      if (self._isLocked(slotKey)) continue;
+      if (self._isLocked(slotKey)) {
+        console.log('[echo-guard] Skipping outgoing clip delta T' + t + ':C' + c + ' — slot locked');
+        continue;
+      }
 
       // New clip created
       if (hasClip && !hadClip) {
