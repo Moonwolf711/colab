@@ -839,13 +839,17 @@ ParamSync.prototype._applyRemoteClipCreateFull = function(payload, now) {
     }
   }
 
-  // Step 2: Create clip
+  // Step 2: Create clip (ignore error if it already exists)
   instrumentPromise.then(function() {
-    return self._writeClient.createClip(t, c, payload.length || 4);
+    return self._writeClient.createClip(t, c, payload.length || 4).catch(function(e) {
+      console.log('[param-sync] Clip T' + t + ':C' + c + ' already exists (ok): ' + e.message);
+    });
   }).then(function() {
-    // Step 3: Add notes if any
+    // Step 3: Clear existing notes, then add new ones
     if (notes.length > 0) {
-      return self._writeClient.addNotesToClip(t, c, notes);
+      return self._writeClient.clearClipNotes(t, c).catch(function() {}).then(function() {
+        return self._writeClient.addNotesToClip(t, c, notes);
+      });
     }
   }).then(function() {
     self._applyingCount = Math.max(0, self._applyingCount - 1);
