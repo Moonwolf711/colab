@@ -227,9 +227,15 @@ ParamSync.prototype._pollStructure = function() {
 
   var startIdx = this._scanIndex;
 
+  // Always scan the focused track first (ensures immediate detection)
+  var focused = this._focusedTrack;
+  if (focused >= 0 && focused < this._trackCount) {
+    this._scanTrackStructure(focused);
+  }
+
   for (var n = 0; n < TRACKS_PER_SCAN; n++) {
     var t = (startIdx + n) % this._trackCount;
-    this._scanTrackStructure(t);
+    if (t !== focused) this._scanTrackStructure(t);
   }
 
   var nextIdx = (startIdx + TRACKS_PER_SCAN) % this._trackCount;
@@ -328,8 +334,8 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 
           if (hasClip && !hadClip) {
             var createKey = 'clip:' + key + ':create';
+            console.log('[param-sync] CLIP CREATED: T' + trackIdx + ':C' + c + ' suppressed=' + self._isSuppressed(createKey, now));
             if (!self._isSuppressed(createKey, now)) {
-              // Fetch notes immediately and bundle with create
               self._fetchAndSendClipCreate(trackIdx, c, clipInfo);
             }
           }
@@ -379,9 +385,14 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipInfo) {
   var self = this;
   // Get notes (may be empty for a brand-new clip)
-  this._client.getClipNotes(trackIdx, clipIdx).then(function(result) {
+  console.log('[param-sync] _fetchAndSendClipCreate: T' + trackIdx + ':C' + clipIdx);
+  // Use _writeClient for notes fetch — _client's TCP queue is saturated by polling
+  this._writeClient.send('get_clip_notes', {
+    track_index: trackIdx, clip_index: clipIdx,
+    start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
+  }).then(function(result) {
     var notes = (result && result.notes) ? result.notes : [];
-    // Also get the device list so peer knows what instrument is loaded
+    console.log('[param-sync] Got ' + notes.length + ' notes for T' + trackIdx + ':C' + clipIdx + ' — sending clip_create_full');
     var devices = self._deviceListSnapshot[trackIdx] || [];
     self._engine.sendSyncDelta('clip_create_full', {
       track: trackIdx, clip: clipIdx,
@@ -399,8 +410,8 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
       oldValue: null, newValue: (clipInfo.name || 'Clip') + ' (' + notes.length + ' notes)',
       timestamp: Date.now()
     });
-  }).catch(function() {
-    // Fallback: send create without notes
+  }).catch(function(err) {
+    console.log('[param-sync] _fetchAndSendClipCreate FAILED: ' + (err.message || err) + ' — sending fallback clip_op');
     self._engine.sendSyncDelta('clip_op', {
       op: 'create', track: trackIdx, clip: clipIdx,
       name: clipInfo.name || '', length: clipInfo.length || 4
@@ -503,7 +514,11 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
 
 ParamSync.prototype._pollClipNotes = function(trackIdx, clipIdx) {
   var self = this;
-  this._client.getClipNotes(trackIdx, clipIdx).then(function(result) {
+  // Use _writeClient to avoid saturating _client's poll queue
+  this._writeClient.send('get_clip_notes', {
+    track_index: trackIdx, clip_index: clipIdx,
+    start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
+  }).then(function(result) {
     var notes = Array.isArray(result) ? result : (result && result.notes ? result.notes : []);
     var now = Date.now();
     var key = trackIdx + ':' + clipIdx;
