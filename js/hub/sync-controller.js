@@ -45,7 +45,7 @@ function SyncController(engine, options) {
   this._writeClient = new AbletonClient({
     host: options.abletonHost || '127.0.0.1',
     port: options.abletonPort || C.ABLETON_BRIDGE_PORT,
-    udpPort: 0 // no UDP needed for writes
+    udpPort: options.abletonUdpPort || C.ABLETON_BRIDGE_UDP_PORT
   });
 
   // Create sub-modules — polling uses _client, applies use _writeClient
