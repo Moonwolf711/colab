@@ -593,44 +593,22 @@ CoLabEngine.prototype.sendCursor = function(trackIdx, sceneIdx, editing, userId)
 };
 
 CoLabEngine.prototype.sendParam = function(trackIdx, param, value) {
-  var data = JSON.stringify({ type: 'param', track: trackIdx, param: param, value: value });
-  var buf = Buffer.alloc(5 + data.length);
-  buf[0] = C.PKT.STATE_UPDATE;
-  buf.writeUInt32LE(this.udp._txSeq || 0, 1);
-  Buffer.from(data).copy(buf, 5);
-  this.udp.sendState(buf);
+  if (!this._connected) return;
+  this.tcp.sendMessage(C.PKT.STATE_UPDATE, { type: 'param', track: trackIdx, param: param, value: value });
 };
 
 CoLabEngine.prototype.sendTransport = function(playing, tempo) {
-  var data = JSON.stringify({ type: 'transport', playing: playing, tempo: tempo });
-  var buf = Buffer.alloc(5 + data.length);
-  buf[0] = C.PKT.STATE_UPDATE;
-  buf.writeUInt32LE(this.udp._txSeq || 0, 1);
-  Buffer.from(data).copy(buf, 5);
-  this.udp.sendState(buf);
+  if (!this._connected) return;
+  this.tcp.sendMessage(C.PKT.STATE_UPDATE, { type: 'transport', playing: playing, tempo: tempo });
 };
 
 /**
- * Send a sync delta to peer. Small payloads go via UDP, large ones via TCP.
- * @param {string} deltaType - e.g. 'device_param', 'clip_notes', 'clip_op', 'device_op', 'automation'
- * @param {object} payload - delta data
+ * Send a sync delta to peer via TCP (guaranteed delivery).
  */
 CoLabEngine.prototype.sendSyncDelta = function(deltaType, payload) {
+  if (!this._connected) return;
   payload.type = deltaType;
-  var data = JSON.stringify(payload);
-
-  // Large payloads (notes, automation) go via TCP for reliability
-  if (data.length > 1400 && this._connected) {
-    this.tcp.sendMessage(C.PKT.STATE_UPDATE, payload);
-    return;
-  }
-
-  // Small payloads (device params, clip ops) go via UDP for speed
-  var buf = Buffer.alloc(5 + data.length);
-  buf[0] = C.PKT.STATE_UPDATE;
-  buf.writeUInt32LE(this.udp._txSeq || 0, 1);
-  Buffer.from(data).copy(buf, 5);
-  this.udp.sendState(buf);
+  this.tcp.sendMessage(C.PKT.STATE_UPDATE, payload);
 };
 
 CoLabEngine.prototype.sendFile = function(relativePath, fileData, callback) {
