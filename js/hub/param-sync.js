@@ -47,7 +47,8 @@ function ParamSync(abletonClient, engine, options) {
   this._deviceSnapshot = {};   // { 'T:D': { name, params: {idx: val} } }
   this._deviceListSnapshot = {}; // { trackIdx: [{name, class_name}] }
   this._clipSnapshot = {};     // { 'T:C': { has_clip, name, length, is_playing, color } }
-  this._clipListSnapshot = {}; // { trackIdx: [{has_clip, name, ...}] }
+  this._clipListSnapshot = {}; // { trackIdx: [{has_clip, name, ...}] } — structure scanner
+  this._clipWatchSnapshot = {}; // { trackIdx: [{has_clip, ...}] } — dedicated clip watch
   this._noteSnapshot = {};     // { 'T:C': noteHash }
   this._noteCache = {};        // { 'T:C': [notes] }
   this._autoSnapshot = {};     // { 'T:C:P': pointsHash }
@@ -380,7 +381,9 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._pollFocusedClips = function() {
-  if (!this._canPoll() || !this._layerEnabled.clips) return;
+  if (!this._enabled) return;
+  if (!this._clipClient || !this._clipClient.isConnected()) return;
+  if (!this._layerEnabled.clips) return;
   if (this._trackCount === 0) return;
 
   // Rotate through ALL tracks (2 per cycle at 2Hz = full scan every ~8s)
@@ -400,10 +403,10 @@ ParamSync.prototype._pollTrackClips = function(t) {
   this._clipClient.send('get_track_info', { track_index: t }).then(function(result) {
     var now = Date.now();
     var slots = result.clip_slots || [];
-    var oldClipList = self._clipListSnapshot[t];
+    var oldClipList = self._clipWatchSnapshot[t];
     if (!oldClipList) {
       // First scan of this track — just store snapshot
-      self._clipListSnapshot[t] = slots;
+      self._clipWatchSnapshot[t] = slots;
       return;
     }
 
@@ -448,7 +451,7 @@ ParamSync.prototype._pollTrackClips = function(t) {
       }
     }
 
-    self._clipListSnapshot[t] = slots;
+    self._clipWatchSnapshot[t] = slots;
   }).catch(function() {});
 };
 
