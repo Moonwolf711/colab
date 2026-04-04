@@ -374,6 +374,10 @@ SyncController.prototype.getClient = function() {
   return this._client;
 };
 
+SyncController.prototype.getWriteClient = function() {
+  return this._writeClient;
+};
+
 SyncController.prototype.getCursorSync = function() {
   return this._cursorSync;
 };

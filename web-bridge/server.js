@@ -934,7 +934,7 @@ server.on('request', (req, res) => {
           return res.end(JSON.stringify({ error: 'sync not initialized' }));
         }
         const { type, params } = JSON.parse(body);
-        const client = engine.sync.getClient(); // use the write client for commands
+        const client = engine.sync.getWriteClient(); // dedicated write connection
         client.send(type, params || {}).then(result => {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
           res.end(JSON.stringify({ ok: true, result }));
