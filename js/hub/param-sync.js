@@ -334,7 +334,6 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 
           if (hasClip && !hadClip) {
             var createKey = 'clip:' + key + ':create';
-            console.log('[param-sync] CLIP CREATED: T' + trackIdx + ':C' + c + ' suppressed=' + self._isSuppressed(createKey, now));
             if (!self._isSuppressed(createKey, now)) {
               self._fetchAndSendClipCreate(trackIdx, c, clipInfo);
             }
@@ -385,14 +384,13 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipInfo) {
   var self = this;
   // Get notes (may be empty for a brand-new clip)
-  console.log('[param-sync] _fetchAndSendClipCreate: T' + trackIdx + ':C' + clipIdx);
   // Use _writeClient for notes fetch — _client's TCP queue is saturated by polling
   this._writeClient.send('get_clip_notes', {
     track_index: trackIdx, clip_index: clipIdx,
     start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
   }).then(function(result) {
     var notes = (result && result.notes) ? result.notes : [];
-    console.log('[param-sync] Got ' + notes.length + ' notes for T' + trackIdx + ':C' + clipIdx + ' — sending clip_create_full');
+    console.log('[param-sync] CLIP CREATE FULL: T' + trackIdx + ':C' + clipIdx + ' — ' + notes.length + ' notes');
     var devices = self._deviceListSnapshot[trackIdx] || [];
     self._engine.sendSyncDelta('clip_create_full', {
       track: trackIdx, clip: clipIdx,
@@ -411,7 +409,7 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
       timestamp: Date.now()
     });
   }).catch(function(err) {
-    console.log('[param-sync] _fetchAndSendClipCreate FAILED: ' + (err.message || err) + ' — sending fallback clip_op');
+    console.log('[param-sync] CLIP CREATE FALLBACK: T' + trackIdx + ':C' + clipIdx + ' — ' + (err.message || err));
     self._engine.sendSyncDelta('clip_op', {
       op: 'create', track: trackIdx, clip: clipIdx,
       name: clipInfo.name || '', length: clipInfo.length || 4
