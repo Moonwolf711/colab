@@ -392,31 +392,33 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._pollFocusedClips = function() {
+  if (!this._clipWatchAlive) {
+    this._clipWatchAlive = true;
+    console.log('[clip-watch] ALIVE — enabled=' + this._enabled +
+      ' clipClient=' + (this._clipClient ? this._clipClient.isConnected() : 'null') +
+      ' clips=' + this._layerEnabled.clips + ' tracks=' + this._trackCount);
+  }
   if (!this._enabled) return;
   if (!this._clipClient || !this._clipClient.isConnected()) return;
   if (!this._layerEnabled.clips) return;
   if (this._trackCount === 0) return;
 
+  // Don't queue more calls if previous one is still in flight
+  if (this._clipWatchBusy) return;
+
   if (!this._clipWatchIndex) this._clipWatchIndex = 0;
 
-  // ALWAYS poll focused track (where user is creating clips)
-  var focused = this._focusedTrack;
-  if (focused >= 0 && focused < this._trackCount) {
-    this._pollTrackClips(focused);
-  }
-
-  // Also rotate through all other tracks (4 per cycle at 5Hz = full scan every ~1.7s)
-  for (var n = 0; n < 4; n++) {
-    var t = this._clipWatchIndex % this._trackCount;
-    this._clipWatchIndex = (this._clipWatchIndex + 1) % this._trackCount;
-    if (t !== focused) this._pollTrackClips(t);
-  }
+  // Poll ONE track per tick (prevents TCP queue buildup)
+  var t = this._clipWatchIndex % this._trackCount;
+  this._clipWatchIndex = (this._clipWatchIndex + 1) % this._trackCount;
+  this._pollTrackClips(t);
 };
 
 ParamSync.prototype._pollTrackClips = function(t) {
   var self = this;
-  // Use writeClient — the readClient is saturated by mixer polling
+  this._clipWatchBusy = true;
   this._clipClient.send('get_track_info', { track_index: t }).then(function(result) {
+    self._clipWatchBusy = false;
     var now = Date.now();
     var slots = result.clip_slots || [];
     var oldClipList = self._clipWatchSnapshot[t];
@@ -474,7 +476,7 @@ ParamSync.prototype._pollTrackClips = function(t) {
     }
 
     self._clipWatchSnapshot[t] = slots;
-  }).catch(function() {});
+  }).catch(function() { self._clipWatchBusy = false; });
 };
 
 // ---------------------------------------------------------------------------
