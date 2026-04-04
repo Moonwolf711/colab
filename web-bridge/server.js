@@ -923,6 +923,33 @@ server.on('request', (req, res) => {
     return;
   }
 
+  // Inject a sync delta directly into the engine (for full-sync-push script)
+  if (req.method === 'POST' && req.url === '/api/sync/send-delta') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        if (!engine) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'engine not started' }));
+        }
+        const payload = JSON.parse(body);
+        const deltaType = payload.type;
+        if (deltaType === 'param') {
+          engine.sendParam(payload.track, payload.param, payload.value);
+        } else {
+          engine.sendSyncDelta(deltaType, payload);
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   if (req.method === 'POST' && /^\/api\/sync\/track\/(\d+)$/.test(req.url)) {
     const trackIndex = parseInt(req.url.match(/\/api\/sync\/track\/(\d+)/)[1]);
     let body = '';
