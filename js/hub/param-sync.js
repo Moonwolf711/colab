@@ -126,7 +126,7 @@ ParamSync.prototype._startPollers = function() {
   this._transportTimer = setInterval(this._pollTransport.bind(this), TRANSPORT_POLL_MS);
   this._structureTimer = setInterval(this._pollStructure.bind(this), STRUCTURE_POLL_MS);
   this._deepTimer = setInterval(this._pollDeep.bind(this), DEEP_POLL_MS);
-  this._clipWatchTimer = setInterval(this._pollFocusedClips.bind(this), 500); // 2Hz clip watch via writeClient
+  this._clipWatchTimer = setInterval(this._pollFocusedClips.bind(this), 200); // 5Hz clip watch via clipClient
   this._cleanupTimer = setInterval(this._cleanupSuppression.bind(this), 5000);
 };
 
@@ -386,14 +386,19 @@ ParamSync.prototype._pollFocusedClips = function() {
   if (!this._layerEnabled.clips) return;
   if (this._trackCount === 0) return;
 
-  // Rotate through ALL tracks (2 per cycle at 2Hz = full scan every ~8s)
   if (!this._clipWatchIndex) this._clipWatchIndex = 0;
-  var self = this;
 
-  for (var n = 0; n < 2; n++) {
+  // ALWAYS poll focused track (where user is creating clips)
+  var focused = this._focusedTrack;
+  if (focused >= 0 && focused < this._trackCount) {
+    this._pollTrackClips(focused);
+  }
+
+  // Also rotate through all other tracks (4 per cycle at 5Hz = full scan every ~1.7s)
+  for (var n = 0; n < 4; n++) {
     var t = this._clipWatchIndex % this._trackCount;
     this._clipWatchIndex = (this._clipWatchIndex + 1) % this._trackCount;
-    this._pollTrackClips(t);
+    if (t !== focused) this._pollTrackClips(t);
   }
 };
 
@@ -437,15 +442,26 @@ ParamSync.prototype._pollTrackClips = function(t) {
         }
       }
 
-      // Clip fire/stop
       if (hasClip && hadClip) {
         var oldPlaying = (oldSlot.clip || {}).is_playing;
+        var oldLength = (oldSlot.clip || {}).length;
+
+        // Clip fire/stop
         if (clipInfo.is_playing !== oldPlaying) {
           var stateKey = 'clip:' + key + ':state';
           if (!self._isSuppressed(stateKey, now)) {
             var op = clipInfo.is_playing ? 'fire' : 'stop';
             self._engine.sendSyncDelta('clip_op', { op: op, track: t, clip: c });
             self._emit('local_change', { track: t, param: 'clip_' + op, oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now });
+          }
+        }
+
+        // Clip replaced (different length = delete+create happened between scans)
+        if (clipInfo.length !== oldLength && oldLength) {
+          var replaceKey = 'clip:' + key + ':create';
+          if (!self._isSuppressed(replaceKey, now)) {
+            console.log('[param-sync] CLIP WATCH: clip replaced T' + t + ':C' + c + ' (len ' + oldLength + '→' + clipInfo.length + ')');
+            self._fetchAndSendClipCreate(t, c, clipInfo);
           }
         }
       }
