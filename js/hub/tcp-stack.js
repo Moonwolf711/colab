@@ -419,6 +419,10 @@ TcpStack.prototype.sendMessage = function(pktType, data) {
   pkt.writeUInt32LE(this._txSeq++, 1);
   payload.copy(pkt, 5);
 
+  // Route to correct channel based on packet type
+  if (pktType === C.PKT.STATE_UPDATE || pktType === C.PKT.STATE_SYNC || pktType === C.PKT.CURSOR_UPDATE) {
+    return this.send(CH.STATE, pkt);
+  }
   return this.sendData(pkt);
 };
 
