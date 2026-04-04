@@ -380,9 +380,20 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 
 ParamSync.prototype._pollFocusedClips = function() {
   if (!this._canPoll() || !this._layerEnabled.clips) return;
-  var t = this._focusedTrack;
-  if (t < 0 || t >= this._trackCount) return;
+  if (this._trackCount === 0) return;
 
+  // Rotate through ALL tracks (2 per cycle at 2Hz = full scan every ~8s)
+  if (!this._clipWatchIndex) this._clipWatchIndex = 0;
+  var self = this;
+
+  for (var n = 0; n < 2; n++) {
+    var t = this._clipWatchIndex % this._trackCount;
+    this._clipWatchIndex = (this._clipWatchIndex + 1) % this._trackCount;
+    this._pollTrackClips(t);
+  }
+};
+
+ParamSync.prototype._pollTrackClips = function(t) {
   var self = this;
   // Use writeClient — the readClient is saturated by mixer polling
   this._writeClient.send('get_track_info', { track_index: t }).then(function(result) {
