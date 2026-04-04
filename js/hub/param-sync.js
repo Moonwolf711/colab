@@ -850,8 +850,8 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
   var self = this;
   var p;
 
-  if (param === 'volume') { this._writeClient.setTrackVolumeUDP(trackIdx, value); p = Promise.resolve(); }
-  else if (param === 'pan') { this._writeClient.setTrackPanUDP(trackIdx, value); p = Promise.resolve(); }
+  if (param === 'volume') { p = this._writeClient.setTrackVolume(trackIdx, value); }
+  else if (param === 'pan') { p = this._writeClient.setTrackPan(trackIdx, value); }
   else if (param === 'mute') { p = this._writeClient.setTrackMute(trackIdx, value); }
   else if (param === 'solo') { p = this._writeClient.setTrackSolo(trackIdx, value); }
   else if (param === 'arm') { p = this._writeClient.setTrackArm(trackIdx, value); }
