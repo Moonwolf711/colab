@@ -57,11 +57,12 @@ function ParamSync(abletonClient, engine, options) {
 
   // Applying state
   this._applyingCount = 0;
-  this._pollPausedUntil = 0;
+  this._mixerPausedUntil = 0;
 
   // Structure scan cursor (rotates through tracks)
   this._scanIndex = 0;
   this._trackCount = 0;
+  this._structureWarmup = true;  // true until first full rotation completes
 
   // Focused track (from cursor sync) — deep polling targets this track
   this._focusedTrack = 0;
@@ -174,7 +175,7 @@ ParamSync.prototype._extractTrackParams = function(track) {
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._pollMixer = function() {
-  if (!this._canPoll() || !this._layerEnabled.mixer) return;
+  if (!this._canPollMixer() || !this._layerEnabled.mixer) return;
 
   var self = this;
   this._client.getAllTracksInfo().then(function(result) {
@@ -224,7 +225,6 @@ ParamSync.prototype._pollStructure = function() {
   if (!this._layerEnabled.devices && !this._layerEnabled.clips) return;
   if (this._trackCount === 0) return;
 
-  var self = this;
   var startIdx = this._scanIndex;
 
   for (var n = 0; n < TRACKS_PER_SCAN; n++) {
@@ -232,55 +232,77 @@ ParamSync.prototype._pollStructure = function() {
     this._scanTrackStructure(t);
   }
 
-  this._scanIndex = (startIdx + TRACKS_PER_SCAN) % this._trackCount;
+  var nextIdx = (startIdx + TRACKS_PER_SCAN) % this._trackCount;
+  // End warmup when we've completed one full rotation
+  if (this._structureWarmup && nextIdx < startIdx) {
+    this._structureWarmup = false;
+    console.log('[param-sync] Structure warmup complete — deltas now active');
+  }
+  this._scanIndex = nextIdx;
 };
 
 /**
  * Scan a single track's devices + clip slots via get_track_info (one TCP call).
+ * During warmup (first full rotation), only populates snapshots — no deltas sent.
  */
 ParamSync.prototype._scanTrackStructure = function(trackIdx) {
   var self = this;
   this._client.getTrackInfo(trackIdx).then(function(result) {
     var now = Date.now();
+    var warmup = self._structureWarmup;
 
     // --- Devices ---
     if (self._layerEnabled.devices) {
       var devices = result.devices || [];
-      var oldDevList = self._deviceListSnapshot[trackIdx] || [];
+      var oldDevList = self._deviceListSnapshot[trackIdx];
       var newDevList = [];
 
       for (var d = 0; d < devices.length; d++) {
         newDevList.push({ name: devices[d].name || '', class_name: devices[d].class_name || '' });
       }
 
-      if (newDevList.length > oldDevList.length) {
-        for (var a = oldDevList.length; a < newDevList.length; a++) {
-          var addKey = 'dev:' + trackIdx + ':add:' + a;
-          if (!self._isSuppressed(addKey, now)) {
-            self._engine.sendSyncDelta('device_op', {
-              op: 'add', track: trackIdx, device_index: a,
-              device_name: newDevList[a].name, class_name: newDevList[a].class_name
-            });
-            self._emit('local_change', {
-              track: trackIdx, param: 'device_add',
-              oldValue: null, newValue: newDevList[a].name, timestamp: now
-            });
-          }
-        }
-      }
+      // Only diff after warmup AND when we have a previous snapshot
+      if (!warmup && oldDevList) {
+        var oldNames = self._deviceNames(oldDevList);
+        var newNames = self._deviceNames(newDevList);
 
-      if (newDevList.length < oldDevList.length) {
-        for (var r = newDevList.length; r < oldDevList.length; r++) {
-          var rmKey = 'dev:' + trackIdx + ':rm:' + r;
-          if (!self._isSuppressed(rmKey, now)) {
-            self._engine.sendSyncDelta('device_op', {
-              op: 'remove', track: trackIdx, device_index: r,
-              device_name: oldDevList[r].name
-            });
-            self._emit('local_change', {
-              track: trackIdx, param: 'device_remove',
-              oldValue: oldDevList[r].name, newValue: null, timestamp: now
-            });
+        if (oldNames !== newNames) {
+          // Find genuinely new devices (names in new but not old)
+          var oldNameSet = {};
+          for (var oi = 0; oi < oldDevList.length; oi++) oldNameSet[oldDevList[oi].name] = true;
+          for (var ni = 0; ni < newDevList.length; ni++) {
+            if (!oldNameSet[newDevList[ni].name]) {
+              var addKey = 'dev:' + trackIdx + ':add:' + newDevList[ni].name;
+              if (!self._isSuppressed(addKey, now)) {
+                self._engine.sendSyncDelta('device_op', {
+                  op: 'add', track: trackIdx, device_index: ni,
+                  device_name: newDevList[ni].name, class_name: newDevList[ni].class_name
+                });
+                self._emit('local_change', {
+                  track: trackIdx, param: 'device_add',
+                  oldValue: null, newValue: newDevList[ni].name, timestamp: now
+                });
+              }
+            }
+          }
+
+          // Find removed devices (names in old but not new)
+          var newNameSet = {};
+          for (var nj = 0; nj < newDevList.length; nj++) newNameSet[newDevList[nj].name] = true;
+          for (var oj = 0; oj < oldDevList.length; oj++) {
+            if (!newNameSet[oldDevList[oj].name]) {
+              var rmKey = 'dev:' + trackIdx + ':rm:' + oldDevList[oj].name;
+              if (!self._isSuppressed(rmKey, now)) {
+                self._engine.sendSyncDelta('device_op', {
+                  op: 'remove', track: trackIdx, device_index: oj,
+                  device_name: oldDevList[oj].name
+                });
+                self._emit('local_change', {
+                  track: trackIdx, param: 'device_remove',
+                  oldValue: oldDevList[oj].name, newValue: null, timestamp: now
+                });
+              }
+            }
           }
         }
       }
@@ -291,55 +313,58 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
     // --- Clips ---
     if (self._layerEnabled.clips) {
       var slots = result.clip_slots || [];
-      var oldClipList = self._clipListSnapshot[trackIdx] || [];
+      var oldClipList = self._clipListSnapshot[trackIdx];
 
-      for (var c = 0; c < slots.length; c++) {
-        var slot = slots[c];
-        var oldSlot = oldClipList[c] || {};
-        var hasClip = !!slot.has_clip;
-        var hadClip = !!oldSlot.has_clip;
-        var clipInfo = slot.clip || {};
-        var oldClipInfo = oldSlot.clip || {};
-        var key = trackIdx + ':' + c;
+      // Only diff after warmup AND when we have a previous snapshot
+      if (!warmup && oldClipList) {
+        for (var c = 0; c < slots.length; c++) {
+          var slot = slots[c];
+          var oldSlot = oldClipList[c] || {};
+          var hasClip = !!slot.has_clip;
+          var hadClip = !!oldSlot.has_clip;
+          var clipInfo = slot.clip || {};
+          var oldClipInfo = oldSlot.clip || {};
+          var key = trackIdx + ':' + c;
 
-        if (hasClip && !hadClip) {
-          var createKey = 'clip:' + key + ':create';
-          if (!self._isSuppressed(createKey, now)) {
-            self._engine.sendSyncDelta('clip_op', {
-              op: 'create', track: trackIdx, clip: c,
-              name: clipInfo.name || '', length: clipInfo.length || 4
-            });
-            self._emit('local_change', {
-              track: trackIdx, param: 'clip_create', oldValue: null,
-              newValue: clipInfo.name || ('Clip ' + c), timestamp: now
-            });
+          if (hasClip && !hadClip) {
+            var createKey = 'clip:' + key + ':create';
+            if (!self._isSuppressed(createKey, now)) {
+              self._engine.sendSyncDelta('clip_op', {
+                op: 'create', track: trackIdx, clip: c,
+                name: clipInfo.name || '', length: clipInfo.length || 4
+              });
+              self._emit('local_change', {
+                track: trackIdx, param: 'clip_create', oldValue: null,
+                newValue: clipInfo.name || ('Clip ' + c), timestamp: now
+              });
+            }
           }
-        }
 
-        if (!hasClip && hadClip) {
-          var deleteKey = 'clip:' + key + ':delete';
-          if (!self._isSuppressed(deleteKey, now)) {
-            self._engine.sendSyncDelta('clip_op', {
-              op: 'delete', track: trackIdx, clip: c
-            });
-            self._emit('local_change', {
-              track: trackIdx, param: 'clip_delete',
-              oldValue: oldClipInfo.name || ('Clip ' + c), newValue: null, timestamp: now
-            });
+          if (!hasClip && hadClip) {
+            var deleteKey = 'clip:' + key + ':delete';
+            if (!self._isSuppressed(deleteKey, now)) {
+              self._engine.sendSyncDelta('clip_op', {
+                op: 'delete', track: trackIdx, clip: c
+              });
+              self._emit('local_change', {
+                track: trackIdx, param: 'clip_delete',
+                oldValue: oldClipInfo.name || ('Clip ' + c), newValue: null, timestamp: now
+              });
+            }
           }
-        }
 
-        if (hasClip && hadClip && clipInfo.is_playing !== oldClipInfo.is_playing) {
-          var stateKey = 'clip:' + key + ':state';
-          if (!self._isSuppressed(stateKey, now)) {
-            var op = clipInfo.is_playing ? 'fire' : 'stop';
-            self._engine.sendSyncDelta('clip_op', {
-              op: op, track: trackIdx, clip: c
-            });
-            self._emit('local_change', {
-              track: trackIdx, param: 'clip_' + op,
-              oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now
-            });
+          if (hasClip && hadClip && clipInfo.is_playing !== oldClipInfo.is_playing) {
+            var stateKey = 'clip:' + key + ':state';
+            if (!self._isSuppressed(stateKey, now)) {
+              var op = clipInfo.is_playing ? 'fire' : 'stop';
+              self._engine.sendSyncDelta('clip_op', {
+                op: op, track: trackIdx, clip: c
+              });
+              self._emit('local_change', {
+                track: trackIdx, param: 'clip_' + op,
+                oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now
+              });
+            }
           }
         }
       }
@@ -485,7 +510,7 @@ ParamSync.prototype._pollClipAutomation = function(trackIdx, clipIdx) {
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._pollTransport = function() {
-  if (!this._canPoll()) return;
+  if (!this._canPollMixer()) return;
 
   var self = this;
   this._client.getSessionInfo().then(function(session) {
@@ -563,7 +588,7 @@ ParamSync.prototype._applyRemoteParam = function(trackIdx, param, value, now) {
   }
 
   this._applyingCount++;
-  this._pollPausedUntil = Date.now() + ECHO_SUPPRESS_MS;
+  this._mixerPausedUntil = Date.now() + ECHO_SUPPRESS_MS;
 
   var self = this;
   var p;
@@ -689,14 +714,27 @@ ParamSync.prototype._applyRemoteClipOp = function(payload, now) {
 
 ParamSync.prototype._applyRemoteDeviceOp = function(payload, now) {
   var t = payload.track, op = payload.op;
-  console.log('[param-sync] APPLY DEVICE OP: T' + t + ' op=' + op + ' device=' + (payload.device_name || payload.device_index));
+  var devName = payload.device_name || '';
+  console.log('[param-sync] APPLY DEVICE OP: T' + t + ' op=' + op + ' device=' + devName);
 
-  var suppressKey = 'dev:' + t + ':' + (op === 'add' ? 'add' : 'rm') + ':' + payload.device_index;
+  // Suppress key uses device name (stable) instead of index (shifts on add/remove)
+  var suppressKey = 'dev:' + t + ':' + (op === 'add' ? 'add' : 'rm') + ':' + devName;
   this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
 
+  // Check if device already exists on this track before trying to insert
+  if (op === 'add' && devName) {
+    var existing = this._deviceListSnapshot[t] || [];
+    for (var i = 0; i < existing.length; i++) {
+      if (existing[i].name === devName) {
+        console.log('[param-sync] SKIP device add — "' + devName + '" already exists on T' + t);
+        return;
+      }
+    }
+  }
+
   var p;
-  if (op === 'add' && payload.device_name) {
-    p = this._writeClient.insertDevice(t, payload.device_name);
+  if (op === 'add' && devName) {
+    p = this._writeClient.insertDevice(t, devName);
   } else if (op === 'remove') {
     p = this._writeClient.deleteDevice(t, payload.device_index);
   }
@@ -704,7 +742,7 @@ ParamSync.prototype._applyRemoteDeviceOp = function(payload, now) {
   var self = this;
   if (p) {
     p.then(function() {
-      self._emit('remote_applied', { track: t, param: 'device_' + op, value: payload.device_name || payload.device_index });
+      self._emit('remote_applied', { track: t, param: 'device_' + op, value: devName || payload.device_index });
     }).catch(function(err) {
       self._emit('remote_apply_error', { track: t, param: 'device_' + op, error: err.message || String(err) });
     });
@@ -737,10 +775,22 @@ ParamSync.prototype._applyRemoteAutomation = function(payload, now) {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Build a fingerprint string of device names for quick comparison */
+ParamSync.prototype._deviceNames = function(devList) {
+  var names = [];
+  for (var i = 0; i < devList.length; i++) names.push(devList[i].name);
+  return names.join('|');
+};
+
 ParamSync.prototype._canPoll = function() {
   if (!this._enabled || !this._client.isConnected()) return false;
+  return true;
+};
+
+ParamSync.prototype._canPollMixer = function() {
+  if (!this._canPoll()) return false;
   if (this._applyingCount > 0) return false;
-  if (this._pollPausedUntil && Date.now() < this._pollPausedUntil) return false;
+  if (this._mixerPausedUntil && Date.now() < this._mixerPausedUntil) return false;
   return true;
 };
 
