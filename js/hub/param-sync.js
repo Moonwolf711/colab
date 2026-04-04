@@ -482,46 +482,32 @@ ParamSync.prototype._pollTrackClips = function(t) {
 // ---------------------------------------------------------------------------
 
 /**
- * When a new clip is detected, fetch its notes and the track's device list,
- * then send a create delta that includes everything the peer needs.
+ * When a new clip is detected, send the create delta IMMEDIATELY (no async wait).
+ * Notes will be synced by the note poll rotation within a few seconds.
+ * This avoids TCP queue starvation that blocked the old async note fetch.
  */
 ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipInfo) {
-  var self = this;
-  // Get notes (may be empty for a brand-new clip)
-  // Use _writeClient for notes fetch — _client's TCP queue is saturated by polling
-  this._clipClient.send('get_clip_notes', {
-    track_index: trackIdx, clip_index: clipIdx,
-    start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
-  }).then(function(result) {
-    var notes = (result && result.notes) ? result.notes : [];
-    console.log('[param-sync] CLIP CREATE FULL: T' + trackIdx + ':C' + clipIdx + ' — ' + notes.length + ' notes');
-    var devices = self._deviceListSnapshot[trackIdx] || [];
-    self._engine.sendSyncDelta('clip_create_full', {
-      track: trackIdx, clip: clipIdx,
-      name: clipInfo.name || '', length: clipInfo.length || 4,
-      notes: notes,
-      devices: devices
-    });
-    // Update note snapshot so we don't re-send on next poll
-    var key = trackIdx + ':' + clipIdx;
-    self._noteSnapshot[key] = self._hashNotes(notes);
-    self._noteCache[key] = notes;
+  var devices = this._deviceListSnapshot[trackIdx] || [];
+  console.log('[param-sync] CLIP CREATE: T' + trackIdx + ':C' + clipIdx +
+    ' len=' + (clipInfo.length || 4) + ' devices=' + devices.length);
 
-    self._emit('local_change', {
-      track: trackIdx, param: 'clip_create',
-      oldValue: null, newValue: (clipInfo.name || 'Clip') + ' (' + notes.length + ' notes)',
-      timestamp: Date.now()
-    });
-  }).catch(function(err) {
-    console.log('[param-sync] CLIP CREATE FALLBACK: T' + trackIdx + ':C' + clipIdx + ' — ' + (err.message || err));
-    self._engine.sendSyncDelta('clip_op', {
-      op: 'create', track: trackIdx, clip: clipIdx,
-      name: clipInfo.name || '', length: clipInfo.length || 4
-    });
-    self._emit('local_change', {
-      track: trackIdx, param: 'clip_create', oldValue: null,
-      newValue: clipInfo.name || ('Clip ' + clipIdx), timestamp: Date.now()
-    });
+  // Send create immediately — no waiting for notes
+  this._engine.sendSyncDelta('clip_create_full', {
+    track: trackIdx, clip: clipIdx,
+    name: clipInfo.name || '', length: clipInfo.length || 4,
+    notes: [],  // empty — note poll will sync content separately
+    devices: devices
+  });
+
+  // Force the note snapshot to empty so the next note poll detects content
+  var key = trackIdx + ':' + clipIdx;
+  this._noteSnapshot[key] = '';
+  this._noteCache[key] = [];
+
+  this._emit('local_change', {
+    track: trackIdx, param: 'clip_create',
+    oldValue: null, newValue: clipInfo.name || ('Clip ' + clipIdx),
+    timestamp: Date.now()
   });
 };
 
@@ -647,7 +633,8 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
 ParamSync.prototype._pollClipNotes = function(trackIdx, clipIdx) {
   var self = this;
   // Use _writeClient to avoid saturating _client's poll queue
-  this._clipClient.send('get_clip_notes', {
+  // Use _writeClient for note reads — _clipClient is saturated by clip watch
+  this._writeClient.send('get_clip_notes', {
     track_index: trackIdx, clip_index: clipIdx,
     start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
   }).then(function(result) {
