@@ -378,7 +378,6 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
               track: trackIdx, param: 'clip_' + op,
               oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now
             });
-            }
           }
         }
       }
