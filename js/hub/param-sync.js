@@ -14,6 +14,7 @@
  */
 
 var C = require('../shared/constants');
+var ParamWizard = require('./param-wizard');
 
 var MIXER_POLL_MS = C.PARAM_DEBOUNCE_MS * 2;   // ~60ms = 16Hz
 var TRANSPORT_POLL_MS = 200;                     // 5Hz
@@ -95,6 +96,9 @@ function ParamSync(abletonClient, engine, options) {
 
   this._handlers = {};
 
+  // ParamWizard — high-perf device param polling daemon
+  this._wizard = new ParamWizard(this);
+
   var self = this;
   this._engineStateHandler = function(data) { self._onPeerState(data); };
 }
@@ -139,9 +143,11 @@ ParamSync.prototype._startPollers = function() {
   this._deepTimer = setInterval(this._pollDeep.bind(this), DEEP_POLL_MS);
   this._clipWatchTimer = setInterval(this._pollFocusedClips.bind(this), 200); // 5Hz clip watch via clipClient
   this._cleanupTimer = setInterval(this._cleanupSuppression.bind(this), 5000);
+  this._wizard.start();
 };
 
 ParamSync.prototype.stop = function() {
+  this._wizard.stop();
   var timers = ['_mixerTimer', '_transportTimer', '_structureTimer', '_deepTimer', '_clipWatchTimer', '_cleanupTimer'];
   for (var i = 0; i < timers.length; i++) {
     if (this[timers[i]]) { clearInterval(this[timers[i]]); this[timers[i]] = null; }
@@ -527,8 +533,7 @@ ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipIn
 ParamSync.prototype._pollDeep = function() {
   if (!this._canPoll()) return;
 
-  // Device params: sweep ALL tracks with devices (rotate 1 per cycle at 4Hz)
-  if (this._layerEnabled.devices) this._pollDeviceParamsRotation();
+  // Device params handled by ParamWizard daemon (separate timer)
 
   // Note polling: rotate through ALL tracks that have clips
   if (this._layerEnabled.notes) this._pollNotesRotation();
