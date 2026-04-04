@@ -57,7 +57,7 @@ exports.RECONNECT_DELAY_MS = 1000;
 exports.RECONNECT_MAX_ATTEMPTS = 10;
 
 // Limits
-exports.MAX_SHARED_TRACKS = 16;
+exports.MAX_SHARED_TRACKS = 64;
 exports.MAX_SYNCED_CLIPS = 64;
 exports.MAX_TRANSFER_FILE_SIZE = 50 * 1024 * 1024; // 50MB per file transfer
 exports.TRANSFER_CHUNK_SIZE = 32768; // 32KB chunks for UDP file transfer
