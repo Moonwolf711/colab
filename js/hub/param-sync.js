@@ -541,18 +541,27 @@ ParamSync.prototype._pollDeep = function() {
 };
 
 /**
- * Rotate through ALL tracks that have devices, polling params.
- * 1 track per cycle at 4Hz. Echo guard skips locked tracks.
+ * Sweep ALL tracks with devices — per-track throttle (300ms min),
+ * echo guard, batch delta collection. 1 track per cycle at 4Hz.
  */
 ParamSync.prototype._pollDeviceParamsRotation = function() {
   var trackKeys = Object.keys(this._deviceListSnapshot);
   if (trackKeys.length === 0) return;
   if (!this._devParamScanIndex) this._devParamScanIndex = 0;
+  if (!this._lastDevPoll) this._lastDevPoll = {};
 
   var idx = this._devParamScanIndex % trackKeys.length;
   this._devParamScanIndex = (this._devParamScanIndex + 1) % trackKeys.length;
   var trackIdx = Number(trackKeys[idx]);
+  var now = Date.now();
 
+  // Per-track throttle: min 300ms between polls of same track
+  if (this._lastDevPoll[trackIdx] && (now - this._lastDevPoll[trackIdx]) < 300) return;
+
+  // ECHO GUARD: skip locked tracks
+  if (this._isLocked(this._devSlotKey(trackIdx))) return;
+
+  this._lastDevPoll[trackIdx] = now;
   this._pollDeviceParams(trackIdx);
 };
 
@@ -567,25 +576,27 @@ ParamSync.prototype._pollNotesRotation = function() {
   var trackIdx = this._noteScanIndex % this._trackCount;
   this._noteScanIndex = (this._noteScanIndex + 1) % this._trackCount;
 
+  // ECHO GUARD: skip locked clips
   var clips = this._clipListSnapshot[trackIdx];
   if (!clips) return;
 
   for (var c = 0; c < clips.length; c++) {
-    if (clips[c] && clips[c].has_clip) {
+    if (clips[c] && clips[c].has_clip && !this._isLocked(this._clipSlotKey(trackIdx, c))) {
       this._pollClipNotes(trackIdx, c);
-      return; // only poll one clip per cycle to keep TCP load down
+      return;
     }
   }
 };
 
+/**
+ * Poll device params for one track via _clipClient (async TCP).
+ * Collects diffs into a batch, sends all at once.
+ */
 ParamSync.prototype._pollDeviceParams = function(trackIdx) {
   var self = this;
-  // ECHO GUARD: skip if device slot is locked
-  if (this._isLocked(this._devSlotKey(trackIdx))) return;
   var deviceList = this._deviceListSnapshot[trackIdx];
   if (!deviceList || deviceList.length === 0) return;
 
-  // Poll first 4 devices max (keep TCP load reasonable)
   var maxDevices = Math.min(deviceList.length, 4);
   for (var d = 0; d < maxDevices; d++) {
     (function(devIdx) {
@@ -595,6 +606,7 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
         var snapKey = trackIdx + ':' + devIdx;
         var oldParams = self._deviceSnapshot[snapKey] || {};
         var newParams = {};
+        var batch = [];
 
         for (var p = 0; p < params.length; p++) {
           var param = params[p];
@@ -603,20 +615,23 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
           newParams[pName] = val;
 
           if (oldParams[pName] !== undefined && oldParams[pName] !== val) {
-            var paramKey = 'dp:' + trackIdx + ':' + devIdx + ':' + pName;
-            if (!self._isSuppressed(paramKey, now)) {
-              self._recentLocalChange[paramKey] = now;
-              self._engine.sendSyncDelta('device_param', {
-                track: trackIdx, device: devIdx,
-                param_name: pName, value: val
-              });
-              self._emit('local_change', {
-                track: trackIdx, param: 'device_param',
-                oldValue: oldParams[pName], newValue: val,
-                detail: pName, timestamp: now
-              });
-            }
+            batch.push({ param_name: pName, value: val, oldValue: oldParams[pName] });
           }
+        }
+
+        // Batch send all changed params
+        if (batch.length > 0 && !self._isLocked(self._devSlotKey(trackIdx))) {
+          for (var b = 0; b < batch.length; b++) {
+            self._engine.sendSyncDelta('device_param', {
+              track: trackIdx, device: devIdx,
+              param_name: batch[b].param_name, value: batch[b].value
+            });
+          }
+          self._emit('local_change', {
+            track: trackIdx, param: 'device_params_batch',
+            oldValue: null, newValue: batch.length + ' params changed',
+            timestamp: now
+          });
         }
 
         self._deviceSnapshot[snapKey] = newParams;
