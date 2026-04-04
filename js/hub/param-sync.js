@@ -124,11 +124,12 @@ ParamSync.prototype._startPollers = function() {
   this._transportTimer = setInterval(this._pollTransport.bind(this), TRANSPORT_POLL_MS);
   this._structureTimer = setInterval(this._pollStructure.bind(this), STRUCTURE_POLL_MS);
   this._deepTimer = setInterval(this._pollDeep.bind(this), DEEP_POLL_MS);
+  this._clipWatchTimer = setInterval(this._pollFocusedClips.bind(this), 500); // 2Hz clip watch via writeClient
   this._cleanupTimer = setInterval(this._cleanupSuppression.bind(this), 5000);
 };
 
 ParamSync.prototype.stop = function() {
-  var timers = ['_mixerTimer', '_transportTimer', '_structureTimer', '_deepTimer', '_cleanupTimer'];
+  var timers = ['_mixerTimer', '_transportTimer', '_structureTimer', '_deepTimer', '_clipWatchTimer', '_cleanupTimer'];
   for (var i = 0; i < timers.length; i++) {
     if (this[timers[i]]) { clearInterval(this[timers[i]]); this[timers[i]] = null; }
   }
@@ -370,6 +371,72 @@ ParamSync.prototype._scanTrackStructure = function(trackIdx) {
 
       self._clipListSnapshot[trackIdx] = slots;
     }
+  }).catch(function() {});
+};
+
+// ---------------------------------------------------------------------------
+// Focused track clip watch (2Hz via writeClient — never blocks)
+// ---------------------------------------------------------------------------
+
+ParamSync.prototype._pollFocusedClips = function() {
+  if (!this._canPoll() || !this._layerEnabled.clips) return;
+  var t = this._focusedTrack;
+  if (t < 0 || t >= this._trackCount) return;
+
+  var self = this;
+  // Use writeClient — the readClient is saturated by mixer polling
+  this._writeClient.send('get_track_info', { track_index: t }).then(function(result) {
+    var now = Date.now();
+    var slots = result.clip_slots || [];
+    var oldClipList = self._clipListSnapshot[t];
+    if (!oldClipList) {
+      // First scan of this track — just store snapshot
+      self._clipListSnapshot[t] = slots;
+      return;
+    }
+
+    for (var c = 0; c < slots.length; c++) {
+      var slot = slots[c];
+      var oldSlot = oldClipList[c] || {};
+      var hasClip = !!slot.has_clip;
+      var hadClip = !!oldSlot.has_clip;
+      var clipInfo = slot.clip || {};
+      var key = t + ':' + c;
+
+      // New clip created
+      if (hasClip && !hadClip) {
+        var createKey = 'clip:' + key + ':create';
+        if (!self._isSuppressed(createKey, now)) {
+          console.log('[param-sync] CLIP WATCH: new clip T' + t + ':C' + c);
+          self._fetchAndSendClipCreate(t, c, clipInfo);
+        }
+      }
+
+      // Clip deleted
+      if (!hasClip && hadClip) {
+        var deleteKey = 'clip:' + key + ':delete';
+        if (!self._isSuppressed(deleteKey, now)) {
+          console.log('[param-sync] CLIP WATCH: deleted T' + t + ':C' + c);
+          self._engine.sendSyncDelta('clip_op', { op: 'delete', track: t, clip: c });
+          self._emit('local_change', { track: t, param: 'clip_delete', oldValue: 'clip', newValue: null, timestamp: now });
+        }
+      }
+
+      // Clip fire/stop
+      if (hasClip && hadClip) {
+        var oldPlaying = (oldSlot.clip || {}).is_playing;
+        if (clipInfo.is_playing !== oldPlaying) {
+          var stateKey = 'clip:' + key + ':state';
+          if (!self._isSuppressed(stateKey, now)) {
+            var op = clipInfo.is_playing ? 'fire' : 'stop';
+            self._engine.sendSyncDelta('clip_op', { op: op, track: t, clip: c });
+            self._emit('local_change', { track: t, param: 'clip_' + op, oldValue: !clipInfo.is_playing, newValue: clipInfo.is_playing, timestamp: now });
+          }
+        }
+      }
+    }
+
+    self._clipListSnapshot[t] = slots;
   }).catch(function() {});
 };
 
