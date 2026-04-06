@@ -1,1 +1,15 @@
 node_modules/
+__pycache__/
+.claude-flow/
+*.jpg
+*.png
+*.log
+agent.log
+watcher.log
+clip-watcher.log
+claude-inbox.txt
+scan-results.txt
+scan*.txt
+screen_raw.json
+ss_*.jpg
+screenshot_*.jpg
