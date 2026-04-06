@@ -57,13 +57,14 @@ function ParamSync(abletonClient, engine, options) {
   // ======================================================================
   // ECHO GUARD — ABSOLUTE RULE: NO ECHO LOOPS EVER
   // When a remote delta is received and applied, the affected slot is
-  // LOCKED for 5 seconds. During lock, NO outgoing deltas are sent
-  // for that slot. This is checked by _isLocked() before ANY send.
-  // The lock covers ALL operation types on that slot (create/delete/
-  // fire/stop/notes/params). This is the ONLY echo prevention needed.
+  // LOCKED briefly. During lock, NO outgoing deltas are sent for that
+  // slot. This is checked by _isLocked() before ANY send.
   // ======================================================================
   this._echoLock = {};        // { slotKey: unlockTimestamp }
-  this._ECHO_LOCK_MS = 5000;  // 5 second hard lock after remote apply
+  this._ECHO_LOCK_MS = 1500;  // 1.5s default lock after remote apply
+  this._ECHO_LOCK_CLIP_MS = 2000;  // 2s for clip create/delete (needs settling)
+  this._ECHO_LOCK_NOTES_MS = 1500; // 1.5s for note changes
+  this._ECHO_LOCK_DEVICE_MS = 1000; // 1s for device param changes
 
   // Legacy suppression (mixer params — kept for backward compat)
   this._recentRemoteApply = {};
@@ -489,33 +490,57 @@ ParamSync.prototype._pollTrackClips = function(t) {
 // ---------------------------------------------------------------------------
 
 /**
- * When a new clip is detected, send the create delta IMMEDIATELY (no async wait).
- * Notes will be synced by the note poll rotation within a few seconds.
- * This avoids TCP queue starvation that blocked the old async note fetch.
+ * When a new clip is detected, fetch notes from local Ableton and send
+ * the full clip (create + notes) as a single reliable delta. Also pushes
+ * directly via HTTP as a backup path.
  */
 ParamSync.prototype._fetchAndSendClipCreate = function(trackIdx, clipIdx, clipInfo) {
   var devices = this._deviceListSnapshot[trackIdx] || [];
-  console.log('[param-sync] CLIP CREATE: T' + trackIdx + ':C' + clipIdx +
-    ' len=' + (clipInfo.length || 4) + ' devices=' + devices.length);
+  var self = this;
+  var key = trackIdx + ':' + clipIdx;
+  var length = clipInfo.length || 4;
 
-  // Send via engine (for peers connected via UDP/TCP)
-  this._engine.sendSyncDelta('clip_create_full', {
-    track: trackIdx, clip: clipIdx,
-    name: clipInfo.name || '', length: clipInfo.length || 4,
-    notes: [],
-    devices: devices
+  console.log('[param-sync] CLIP CREATE: T' + trackIdx + ':C' + clipIdx +
+    ' len=' + length + ' devices=' + devices.length);
+
+  // Fetch notes from local Ableton before sending the delta
+  this._writeClient.send('get_clip_notes', {
+    track_index: trackIdx, clip_index: clipIdx,
+    start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
+  }).then(function(result) {
+    var notes = (result && result.notes) ? result.notes : [];
+
+    // Send full clip with notes via reliable TCP channel
+    self._engine.sendSyncDelta('clip_create_full', {
+      track: trackIdx, clip: clipIdx,
+      name: clipInfo.name || '', length: length,
+      notes: notes,
+      devices: devices
+    });
+
+    self._noteSnapshot[key] = self._hashNotes(notes);
+    self._noteCache[key] = notes;
+
+    console.log('[param-sync] CLIP CREATE sent: T' + trackIdx + ':C' + clipIdx +
+      ' notes=' + notes.length);
+  }).catch(function(err) {
+    // Fallback: send without notes, let note rotation catch up
+    console.log('[param-sync] CLIP CREATE note fetch failed, sending empty: ' + (err.message || err));
+    self._engine.sendSyncDelta('clip_create_full', {
+      track: trackIdx, clip: clipIdx,
+      name: clipInfo.name || '', length: length,
+      notes: [],
+      devices: devices
+    });
+    self._noteSnapshot[key] = '';
+    self._noteCache[key] = [];
   });
 
-  // ALSO push directly to HAVEN via HTTP (reliable, bypasses engine queue)
-  var self = this;
+  // ALSO push directly via HTTP (reliable backup path)
   var peerIp = this._engine.peerIp;
   if (peerIp) {
-    this._directClipPush(peerIp, trackIdx, clipIdx, clipInfo.length || 4);
+    this._directClipPush(peerIp, trackIdx, clipIdx, length);
   }
-
-  var key = trackIdx + ':' + clipIdx;
-  this._noteSnapshot[key] = '';
-  this._noteCache[key] = [];
 
   this._emit('local_change', {
     track: trackIdx, param: 'clip_create',
@@ -588,10 +613,14 @@ ParamSync.prototype._pollDeep = function() {
   // Note polling: rotate through ALL tracks that have clips
   if (this._layerEnabled.notes) this._pollNotesRotation();
 
-  // Automation on focused clip only
-  var t = this._focusedTrack;
-  if (this._layerEnabled.automation && t >= 0 && t < this._trackCount && this._focusedClip >= 0) {
-    this._pollClipAutomation(t, this._focusedClip);
+  // Automation: always poll focused clip, plus rotate through others
+  if (this._layerEnabled.automation) {
+    var t = this._focusedTrack;
+    if (t >= 0 && t < this._trackCount && this._focusedClip >= 0) {
+      this._pollClipAutomation(t, this._focusedClip);
+    }
+    // Rotate through all tracks/clips for automation (1 per cycle)
+    this._pollAutomationRotation();
   }
 };
 
@@ -622,16 +651,30 @@ ParamSync.prototype._pollDeviceParamsRotation = function() {
 
 /**
  * Rotate through tracks polling notes on any clip that exists.
- * Polls 1 track per cycle at 4Hz → full rotation every ~8s for 33 tracks.
+ * Polls 2 tracks per cycle at 4Hz → full rotation every ~4s for 33 tracks.
+ * Always polls the focused track first for responsiveness.
  */
 ParamSync.prototype._pollNotesRotation = function() {
   if (this._trackCount === 0) return;
   if (!this._noteScanIndex) this._noteScanIndex = 0;
 
-  var trackIdx = this._noteScanIndex % this._trackCount;
-  this._noteScanIndex = (this._noteScanIndex + 1) % this._trackCount;
+  // Always poll focused track first (immediate responsiveness)
+  var focused = this._focusedTrack;
+  if (focused >= 0 && focused < this._trackCount) {
+    this._pollTrackNotes(focused);
+  }
 
-  // ECHO GUARD: skip locked clips
+  // Then rotate through 2 other tracks per cycle
+  for (var n = 0; n < 2; n++) {
+    var trackIdx = this._noteScanIndex % this._trackCount;
+    this._noteScanIndex = (this._noteScanIndex + 1) % this._trackCount;
+    if (trackIdx === focused) continue; // already polled above
+    this._pollTrackNotes(trackIdx);
+  }
+};
+
+/** Poll notes for all clips on a single track */
+ParamSync.prototype._pollTrackNotes = function(trackIdx) {
   var clips = this._clipListSnapshot[trackIdx];
   if (!clips) return;
 
@@ -639,7 +682,6 @@ ParamSync.prototype._pollNotesRotation = function() {
     if (clips[c] && clips[c].has_clip && !this._isLocked(this._clipSlotKey(trackIdx, c))) {
       this._pollClipNotes(trackIdx, c);
       this._pollClipProperties(trackIdx, c);
-      return;
     }
   }
 };
@@ -805,6 +847,37 @@ ParamSync.prototype._pollClipAutomation = function(trackIdx, clipIdx) {
 };
 
 // ---------------------------------------------------------------------------
+// Automation rotation — polls automation across ALL tracks/clips (1 per cycle)
+// ---------------------------------------------------------------------------
+
+ParamSync.prototype._pollAutomationRotation = function() {
+  if (this._trackCount === 0) return;
+  if (!this._autoScanIndex) this._autoScanIndex = 0;
+
+  // Find next track that has clips with automation-capable devices
+  var startIdx = this._autoScanIndex;
+  for (var attempt = 0; attempt < this._trackCount; attempt++) {
+    var t = (startIdx + attempt) % this._trackCount;
+    var clips = this._clipListSnapshot[t];
+    if (!clips) continue;
+
+    // Skip focused track/clip (already polled above)
+    for (var c = 0; c < clips.length; c++) {
+      if (t === this._focusedTrack && c === this._focusedClip) continue;
+      if (!clips[c] || !clips[c].has_clip) continue;
+      if (this._isLocked(this._clipSlotKey(t, c))) continue;
+
+      // Found a clip to poll — advance index past this track
+      this._autoScanIndex = (t + 1) % this._trackCount;
+      this._pollClipAutomation(t, c);
+      return;
+    }
+  }
+  // No clips found — advance anyway
+  this._autoScanIndex = (startIdx + 1) % this._trackCount;
+};
+
+// ---------------------------------------------------------------------------
 // Transport polling (5Hz) — unchanged
 // ---------------------------------------------------------------------------
 
@@ -851,10 +924,21 @@ ParamSync.prototype._onPeerState = function(data) {
 
   var payload;
   if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
-    try { payload = JSON.parse(data.slice(5).toString('utf8')); } catch(e) { return; }
+    try {
+      payload = JSON.parse(data.slice(5).toString('utf8'));
+    } catch(e) {
+      console.log('[param-sync] JSON parse error on incoming state: ' + e.message +
+        ' (bytes=' + data.length + ', first50=' + data.slice(5, 55).toString('utf8') + ')');
+      return;
+    }
   } else if (typeof data === 'object') {
     payload = data;
   } else {
+    return;
+  }
+
+  if (!payload || !payload.type) {
+    console.log('[param-sync] Received state with no type field');
     return;
   }
 
@@ -878,6 +962,8 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'clip_prop': this._applyClipProp(payload, now); break;
     case 'return_param': this._applyReturnParam(payload, now); break;
     case 'track_fold': this._applyTrackFold(payload, now); break;
+    default:
+      console.log('[param-sync] Unknown delta type: ' + payload.type);
   }
 };
 
@@ -948,8 +1034,8 @@ ParamSync.prototype._applyRemoteDeviceParam = function(payload, now) {
   var t = payload.track, d = payload.device, pName = payload.param_name, val = payload.value;
   console.log('[param-sync] APPLY DEVICE PARAM: T' + t + ':D' + d + ':' + pName + ' = ' + val);
 
-  // ECHO GUARD: lock device slot
-  this._lockSlot(this._devSlotKey(t));
+  // ECHO GUARD: lock device slot (short — device params are high frequency)
+  this._lockSlot(this._devSlotKey(t), this._ECHO_LOCK_DEVICE_MS);
 
   // Update snapshot
   var snapKey = t + ':' + d;
@@ -998,8 +1084,8 @@ ParamSync.prototype._applyRemoteClipOp = function(payload, now) {
   var t = payload.track, c = payload.clip, op = payload.op;
   console.log('[param-sync] APPLY CLIP OP: T' + t + ':C' + c + ' op=' + op);
 
-  // ECHO GUARD: hard lock this clip slot
-  this._lockSlot(this._clipSlotKey(t, c));
+  // ECHO GUARD: lock clip slot
+  this._lockSlot(this._clipSlotKey(t, c), this._ECHO_LOCK_CLIP_MS);
 
   // Also update clipWatchSnapshot so the watch doesn't re-detect this change
   if (this._clipWatchSnapshot[t]) {
@@ -1037,8 +1123,8 @@ ParamSync.prototype._applyRemoteClipCreateFull = function(payload, now) {
   console.log('[param-sync] APPLY CLIP CREATE FULL: T' + t + ':C' + c +
     ' len=' + (payload.length || 4) + ' notes=' + notes.length + ' devices=' + devices.length);
 
-  // ECHO GUARD: hard lock this clip slot
-  this._lockSlot(this._clipSlotKey(t, c));
+  // ECHO GUARD: lock clip slot (longer for full create — needs settling)
+  this._lockSlot(this._clipSlotKey(t, c), this._ECHO_LOCK_CLIP_MS);
 
   var self = this;
   this._applyingCount++;
@@ -1115,7 +1201,7 @@ ParamSync.prototype._applyRemoteDeviceOp = function(payload, now) {
   console.log('[param-sync] APPLY DEVICE OP: T' + t + ' op=' + op + ' device=' + devName);
 
   // ECHO GUARD: lock device slot
-  this._lockSlot(this._devSlotKey(t));
+  this._lockSlot(this._devSlotKey(t), this._ECHO_LOCK_CLIP_MS);
 
   // Check if device already exists on this track before trying to insert
   if (op === 'add' && devName) {
@@ -1236,7 +1322,7 @@ ParamSync.prototype._applyClipProp = function(payload, now) {
     var params = Object.assign({ track_index: t, clip_index: c }, paramMap[prop] || {});
     this._writeClient.send(cmdMap[prop], params).catch(function(){});
   }
-  this._lockSlot(this._clipSlotKey(t, c));
+  this._lockSlot(this._clipSlotKey(t, c), this._ECHO_LOCK_NOTES_MS);
   this._emit('remote_change', { track: t, param: 'clip_' + prop, value: val, timestamp: now });
 };
 
@@ -1504,8 +1590,8 @@ ParamSync.prototype._applyAlsDiff = function(payload, now) {
 // ======================================================================
 
 /** Lock a slot after applying a remote change. NO outgoing deltas for this slot. */
-ParamSync.prototype._lockSlot = function(slotKey) {
-  this._echoLock[slotKey] = Date.now() + this._ECHO_LOCK_MS;
+ParamSync.prototype._lockSlot = function(slotKey, durationMs) {
+  this._echoLock[slotKey] = Date.now() + (durationMs || this._ECHO_LOCK_MS);
 };
 
 /** Check if a slot is locked (remote change was recently applied). */

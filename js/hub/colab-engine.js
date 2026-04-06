@@ -603,12 +603,22 @@ CoLabEngine.prototype.sendTransport = function(playing, tempo) {
 };
 
 /**
- * Send a sync delta to peer via TCP (guaranteed delivery).
+ * Send a sync delta to peer via TCP.
+ * Critical deltas (clips, notes, automation, devices) use the reliable DATA
+ * channel so they survive backpressure. Lightweight mixer/transport params
+ * stay on the fast STATE channel (acceptable to drop under load).
  */
 CoLabEngine.prototype.sendSyncDelta = function(deltaType, payload) {
   if (!this._connected) return;
   payload.type = deltaType;
-  this.tcp.sendMessage(C.PKT.STATE_UPDATE, payload);
+
+  // These delta types carry structural/note data that MUST NOT be dropped
+  var reliable = deltaType === 'clip_create_full' || deltaType === 'clip_notes' ||
+    deltaType === 'clip_op' || deltaType === 'clip_prop' ||
+    deltaType === 'device_op' || deltaType === 'automation' ||
+    deltaType === 'routing' || deltaType === 'scene_count';
+
+  this.tcp.sendMessage(C.PKT.STATE_UPDATE, payload, reliable);
 };
 
 CoLabEngine.prototype.sendFile = function(relativePath, fileData, callback) {

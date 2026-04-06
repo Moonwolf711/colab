@@ -332,6 +332,48 @@ function wireEngineToM4L() {
         broadcast({ type: 'diff', source: 'partner', diffs });
       }
 
+      // --- Clip operations (create, delete, fire, stop) ---
+      if (msg.type === 'clip_create_full' || msg.type === 'clip_op') {
+        broadcast({ type: 'engine_clip_op', data: msg, timestamp: Date.now() });
+        sendToM4L({ type: 'clip_op', user: 'partner', data: msg, ts: Date.now() });
+      }
+
+      // --- Note sync ---
+      if (msg.type === 'clip_notes') {
+        broadcast({ type: 'engine_clip_notes', data: msg, timestamp: Date.now() });
+        sendToM4L({ type: 'clip_notes', user: 'partner', data: msg, ts: Date.now() });
+      }
+
+      // --- Clip property changes ---
+      if (msg.type === 'clip_prop') {
+        broadcast({ type: 'engine_clip_prop', data: msg, timestamp: Date.now() });
+      }
+
+      // --- Device operations (add/remove) ---
+      if (msg.type === 'device_op') {
+        broadcast({ type: 'engine_device_op', data: msg, timestamp: Date.now() });
+        sendToM4L({ type: 'device_op', user: 'partner', data: msg, ts: Date.now() });
+      }
+
+      // --- Device parameter changes ---
+      if (msg.type === 'device_param') {
+        broadcast({ type: 'engine_device_param', data: msg, timestamp: Date.now() });
+      }
+
+      // --- Automation ---
+      if (msg.type === 'automation') {
+        broadcast({ type: 'engine_automation', data: msg, timestamp: Date.now() });
+        sendToM4L({ type: 'automation', user: 'partner', data: msg, ts: Date.now() });
+      }
+
+      // --- Master/crossfader/routing/returns ---
+      if (msg.type === 'master_param' || msg.type === 'master_device_param' ||
+          msg.type === 'crossfader' || msg.type === 'routing' ||
+          msg.type === 'return_param' || msg.type === 'scene_prop' ||
+          msg.type === 'track_fold') {
+        broadcast({ type: 'engine_' + msg.type, data: msg, timestamp: Date.now() });
+      }
+
       if (msg.type === 'als_save') {
         broadcast({ type: 'partner_als_save', data: msg });
       }

@@ -400,12 +400,13 @@ TcpStack.prototype.sendAudio = function(payload) {
 // ---------------------------------------------------------------------------
 
 /**
- * Send a JSON-serializable object reliably on the DATA channel.
+ * Send a JSON-serializable object on the appropriate channel.
  * @param {number} pktType - C.PKT.* type byte
  * @param {object|Buffer} data - JSON object or raw Buffer
+ * @param {boolean} [reliable] - force DATA channel (won't be dropped under backpressure)
  * @returns {boolean}
  */
-TcpStack.prototype.sendMessage = function(pktType, data) {
+TcpStack.prototype.sendMessage = function(pktType, data, reliable) {
   var payload;
   if (Buffer.isBuffer(data)) {
     payload = data;
@@ -418,6 +419,11 @@ TcpStack.prototype.sendMessage = function(pktType, data) {
   pkt[0] = pktType;
   pkt.writeUInt32LE(this._txSeq++, 1);
   payload.copy(pkt, 5);
+
+  // Reliable flag forces DATA channel (never dropped under backpressure)
+  if (reliable) {
+    return this.sendData(pkt);
+  }
 
   // Route to correct channel based on packet type
   if (pktType === C.PKT.STATE_UPDATE || pktType === C.PKT.STATE_SYNC || pktType === C.PKT.CURSOR_UPDATE) {
@@ -598,6 +604,11 @@ TcpStack.prototype._dispatchFrame = function(channel, payload) {
   // Data channel
   if (channel === CH.DATA) {
     switch (pktType) {
+      case C.PKT.STATE_UPDATE:
+      case C.PKT.STATE_SYNC:
+        // Reliable sync deltas routed through DATA channel — emit as 'state'
+        this._emit('state', payload);
+        break;
       case C.PKT.ASSET_MANIFEST:
         this._emit('asset_manifest', payload.slice(5));
         break;
