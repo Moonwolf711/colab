@@ -141,14 +141,15 @@ ParamSync.prototype._startPollers = function() {
   this._transportTimer = setInterval(this._pollTransport.bind(this), TRANSPORT_POLL_MS);
   this._structureTimer = setInterval(this._pollStructure.bind(this), STRUCTURE_POLL_MS);
   this._deepTimer = setInterval(this._pollDeep.bind(this), DEEP_POLL_MS);
-  this._clipWatchTimer = setInterval(this._pollFocusedClips.bind(this), 200); // 5Hz clip watch via clipClient
+  this._clipWatchTimer = setInterval(this._pollFocusedClips.bind(this), 200);
+  this._extraTimer = setInterval(this._pollExtra.bind(this), 2000); // 0.5Hz master + crossfader
   this._cleanupTimer = setInterval(this._cleanupSuppression.bind(this), 5000);
   this._wizard.start();
 };
 
 ParamSync.prototype.stop = function() {
   this._wizard.stop();
-  var timers = ['_mixerTimer', '_transportTimer', '_structureTimer', '_deepTimer', '_clipWatchTimer', '_cleanupTimer'];
+  var timers = ['_mixerTimer', '_transportTimer', '_structureTimer', '_deepTimer', '_clipWatchTimer', '_extraTimer', '_cleanupTimer'];
   for (var i = 0; i < timers.length; i++) {
     if (this[timers[i]]) { clearInterval(this[timers[i]]); this[timers[i]] = null; }
   }
@@ -827,6 +828,8 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'device_op':   this._applyRemoteDeviceOp(payload, now); break;
     case 'automation':  this._applyRemoteAutomation(payload, now); break;
     case 'als_diff_apply': this._applyAlsDiff(payload, now); break;
+    case 'master_param': this._applyMasterParam(payload, now); break;
+    case 'crossfader': this._applyCrossfader(payload, now); break;
   }
 };
 
@@ -1117,6 +1120,74 @@ ParamSync.prototype._applyRemoteAutomation = function(payload, now) {
 };
 
 // ---------------------------------------------------------------------------
+// --- Master track + crossfader apply ---
+
+ParamSync.prototype._applyMasterParam = function(payload, now) {
+  var param = payload.param, val = payload.value;
+  console.log('[param-sync] APPLY MASTER: ' + param + ' = ' + val);
+  if (!this._masterSnapshot) this._masterSnapshot = {};
+  this._masterSnapshot[param] = val;
+  if (param === 'volume') this._writeClient.send('set_master_volume', { volume: val }).catch(function(){});
+  if (param === 'pan') this._writeClient.send('set_master_pan', { pan: val }).catch(function(){});
+  this._emit('remote_change', { track: -2, param: 'master_' + param, value: val, timestamp: now });
+};
+
+ParamSync.prototype._applyCrossfader = function(payload, now) {
+  console.log('[param-sync] APPLY CROSSFADER: ' + payload.value);
+  this._crossfaderSnapshot = payload.value;
+  this._writeClient.send('set_crossfader', { crossfader: payload.value }).catch(function(){});
+  this._emit('remote_change', { track: -1, param: 'crossfader', value: payload.value, timestamp: now });
+};
+
+// ---------------------------------------------------------------------------
+// Extra polling (0.5Hz) — master track, crossfader, scenes
+// ---------------------------------------------------------------------------
+
+ParamSync.prototype._pollExtra = function() {
+  if (!this._canPoll()) return;
+  if (!this._extraBusy) this._pollMasterTrack();
+  if (!this._extraBusy2) this._pollCrossfader();
+};
+
+ParamSync.prototype._pollMasterTrack = function() {
+  var self = this;
+  this._extraBusy = true;
+  this._clipClient.send('get_master_track_info', {}).then(function(result) {
+    self._extraBusy = false;
+    if (!result || !result.volume) return;
+    var now = Date.now();
+
+    if (!self._masterSnapshot) self._masterSnapshot = {};
+    var snap = self._masterSnapshot;
+    var params = { volume: result.volume, pan: result.panning || 0 };
+
+    for (var key in params) {
+      if (snap[key] !== undefined && snap[key] !== params[key]) {
+        self._engine.sendSyncDelta('master_param', { param: key, value: params[key] });
+        self._emit('local_change', { track: -2, param: 'master_' + key, oldValue: snap[key], newValue: params[key], timestamp: now });
+      }
+      snap[key] = params[key];
+    }
+  }).catch(function() { self._extraBusy = false; });
+};
+
+ParamSync.prototype._pollCrossfader = function() {
+  var self = this;
+  this._extraBusy2 = true;
+  this._clipClient.send('get_crossfader', {}).then(function(result) {
+    self._extraBusy2 = false;
+    if (!result || result.crossfader === undefined) return;
+    var now = Date.now();
+    var val = result.crossfader;
+
+    if (self._crossfaderSnapshot !== undefined && self._crossfaderSnapshot !== val) {
+      self._engine.sendSyncDelta('crossfader', { value: val });
+      self._emit('local_change', { track: -1, param: 'crossfader', oldValue: self._crossfaderSnapshot, newValue: val, timestamp: now });
+    }
+    self._crossfaderSnapshot = val;
+  }).catch(function() { self._extraBusy2 = false; });
+};
+
 // ---------------------------------------------------------------------------
 // ALS Diff Apply — process structured diffs from .als file saves
 // ---------------------------------------------------------------------------
