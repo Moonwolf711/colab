@@ -628,6 +628,7 @@ ParamSync.prototype._pollNotesRotation = function() {
   for (var c = 0; c < clips.length; c++) {
     if (clips[c] && clips[c].has_clip && !this._isLocked(this._clipSlotKey(trackIdx, c))) {
       this._pollClipNotes(trackIdx, c);
+      this._pollClipProperties(trackIdx, c);
       return;
     }
   }
@@ -683,6 +684,37 @@ ParamSync.prototype._pollDeviceParams = function(trackIdx) {
       }).catch(function() {});
     })(d);
   }
+};
+
+ParamSync.prototype._pollClipProperties = function(trackIdx, clipIdx) {
+  var self = this;
+  this._writeClient.send('get_clip_properties', {
+    track_index: trackIdx, clip_index: clipIdx
+  }).then(function(result) {
+    if (!result) return;
+    var now = Date.now();
+    var key = 'cp:' + trackIdx + ':' + clipIdx;
+    if (!self._clipPropSnapshot) self._clipPropSnapshot = {};
+    var snap = self._clipPropSnapshot[key] || {};
+    var fields = ['name', 'color_index', 'looping', 'loop_start', 'loop_end',
+                  'launch_mode', 'pitch_coarse', 'pitch_fine', 'warp_mode'];
+
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      var val = result[f];
+      if (val === undefined) continue;
+      if (snap[f] !== undefined && snap[f] !== val) {
+        self._engine.sendSyncDelta('clip_prop', {
+          track: trackIdx, clip: clipIdx, prop: f, value: val
+        });
+        self._emit('local_change', {
+          track: trackIdx, param: 'clip_' + f, oldValue: snap[f], newValue: val, timestamp: now
+        });
+      }
+      snap[f] = val;
+    }
+    self._clipPropSnapshot[key] = snap;
+  }).catch(function() {});
 };
 
 ParamSync.prototype._pollClipNotes = function(trackIdx, clipIdx) {
@@ -833,6 +865,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'crossfader': this._applyCrossfader(payload, now); break;
     case 'scene_prop': this._applySceneProp(payload, now); break;
     case 'routing': this._applyRouting(payload, now); break;
+    case 'clip_prop': this._applyClipProp(payload, now); break;
   }
 };
 
@@ -1148,6 +1181,30 @@ ParamSync.prototype._applySceneProp = function(payload, now) {
   if (prop === 'name') this._writeClient.send('set_scene_name', { scene_index: scene, name: val }).catch(function(){});
   if (prop === 'color') this._writeClient.send('set_scene_color', { scene_index: scene, color_index: val }).catch(function(){});
   this._emit('remote_change', { track: -1, param: 'scene_' + prop, value: payload, timestamp: now });
+};
+
+ParamSync.prototype._applyClipProp = function(payload, now) {
+  var t = payload.track, c = payload.clip, prop = payload.prop, val = payload.value;
+  var cmdMap = {
+    name: 'set_clip_name', color_index: 'set_clip_color',
+    looping: 'set_clip_looping', launch_mode: 'set_clip_launch_mode',
+    pitch_coarse: 'set_clip_pitch', pitch_fine: 'set_clip_pitch'
+  };
+  var paramMap = {
+    name: { name: val }, color_index: { color_index: val },
+    looping: { looping: val }, launch_mode: { launch_mode: val },
+    pitch_coarse: { pitch_coarse: val }, pitch_fine: { pitch_fine: val }
+  };
+  if (prop === 'loop_start' || prop === 'loop_end') {
+    this._writeClient.send('set_clip_loop_points', {
+      track_index: t, clip_index: c, [prop]: val
+    }).catch(function(){});
+  } else if (cmdMap[prop]) {
+    var params = Object.assign({ track_index: t, clip_index: c }, paramMap[prop] || {});
+    this._writeClient.send(cmdMap[prop], params).catch(function(){});
+  }
+  this._lockSlot(this._clipSlotKey(t, c));
+  this._emit('remote_change', { track: t, param: 'clip_' + prop, value: val, timestamp: now });
 };
 
 ParamSync.prototype._applyRouting = function(payload, now) {
