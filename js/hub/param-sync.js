@@ -829,7 +829,9 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'automation':  this._applyRemoteAutomation(payload, now); break;
     case 'als_diff_apply': this._applyAlsDiff(payload, now); break;
     case 'master_param': this._applyMasterParam(payload, now); break;
+    case 'master_device_param': this._applyMasterDeviceParam(payload, now); break;
     case 'crossfader': this._applyCrossfader(payload, now); break;
+    case 'scene_prop': this._applySceneProp(payload, now); break;
   }
 };
 
@@ -1132,6 +1134,21 @@ ParamSync.prototype._applyMasterParam = function(payload, now) {
   this._emit('remote_change', { track: -2, param: 'master_' + param, value: val, timestamp: now });
 };
 
+ParamSync.prototype._applyMasterDeviceParam = function(payload, now) {
+  var d = payload.device, pName = payload.param_name, val = payload.value;
+  this._writeClient.send('set_device_parameter', {
+    track_index: 0, device_index: d, parameter_name: pName, value: val, track_type: 'master'
+  }).catch(function(){});
+  this._emit('remote_change', { track: -2, param: 'master_device_param', value: payload, timestamp: now });
+};
+
+ParamSync.prototype._applySceneProp = function(payload, now) {
+  var scene = payload.scene, prop = payload.prop, val = payload.value;
+  if (prop === 'name') this._writeClient.send('set_scene_name', { scene_index: scene, name: val }).catch(function(){});
+  if (prop === 'color') this._writeClient.send('set_scene_color', { scene_index: scene, color_index: val }).catch(function(){});
+  this._emit('remote_change', { track: -1, param: 'scene_' + prop, value: payload, timestamp: now });
+};
+
 ParamSync.prototype._applyCrossfader = function(payload, now) {
   console.log('[param-sync] APPLY CROSSFADER: ' + payload.value);
   this._crossfaderSnapshot = payload.value;
@@ -1147,6 +1164,7 @@ ParamSync.prototype._pollExtra = function() {
   if (!this._canPoll()) return;
   if (!this._extraBusy) this._pollMasterTrack();
   if (!this._extraBusy2) this._pollCrossfader();
+  if (!this._extraBusy3) this._pollScenes();
 };
 
 ParamSync.prototype._pollMasterTrack = function() {
@@ -1168,7 +1186,47 @@ ParamSync.prototype._pollMasterTrack = function() {
       }
       snap[key] = params[key];
     }
+
+    // Also poll master device params (rotate 1 device per cycle)
+    var masterDevs = result.devices || [];
+    if (masterDevs.length > 0) {
+      if (!self._masterDevIdx) self._masterDevIdx = 0;
+      var dIdx = self._masterDevIdx % masterDevs.length;
+      self._masterDevIdx = (self._masterDevIdx + 1) % masterDevs.length;
+      self._pollMasterDeviceParams(dIdx);
+    }
   }).catch(function() { self._extraBusy = false; });
+};
+
+ParamSync.prototype._pollMasterDeviceParams = function(devIdx) {
+  var self = this;
+  this._clipClient.send('get_device_parameters', { track_index: 0, device_index: devIdx, track_type: 'master' }).then(function(result) {
+    var params = result.parameters || result || [];
+    if (!Array.isArray(params) || params.length === 0) return;
+    var now = Date.now();
+    var snapKey = 'master:' + devIdx;
+    if (!self._deviceSnapshot[snapKey]) self._deviceSnapshot[snapKey] = {};
+    var snap = self._deviceSnapshot[snapKey];
+    var batch = [];
+
+    for (var p = 0; p < params.length; p++) {
+      var pName = params[p].name || ('P' + p);
+      var val = params[p].value;
+      if (snap[pName] !== undefined && snap[pName] !== val) {
+        batch.push({ param_name: pName, value: val });
+      }
+      snap[pName] = val;
+    }
+
+    if (batch.length > 0) {
+      for (var b = 0; b < batch.length; b++) {
+        self._engine.sendSyncDelta('master_device_param', {
+          device: devIdx, param_name: batch[b].param_name, value: batch[b].value
+        });
+      }
+      self._emit('local_change', { track: -2, param: 'master_device', oldValue: null, newValue: batch.length + ' params', timestamp: now });
+    }
+  }).catch(function() {});
 };
 
 ParamSync.prototype._pollCrossfader = function() {
@@ -1186,6 +1244,38 @@ ParamSync.prototype._pollCrossfader = function() {
     }
     self._crossfaderSnapshot = val;
   }).catch(function() { self._extraBusy2 = false; });
+};
+
+ParamSync.prototype._pollScenes = function() {
+  var self = this;
+  this._extraBusy3 = true;
+  this._clipClient.send('get_scenes', {}).then(function(result) {
+    self._extraBusy3 = false;
+    var scenes = (result && result.scenes) ? result.scenes : [];
+    if (scenes.length === 0) return;
+    var now = Date.now();
+
+    if (!self._sceneSnapshot) self._sceneSnapshot = [];
+
+    // Detect scene count change
+    if (self._sceneSnapshot.length > 0 && scenes.length !== self._sceneSnapshot.length) {
+      self._engine.sendSyncDelta('scene_count', { count: scenes.length });
+      self._emit('local_change', { track: -1, param: 'scene_count', oldValue: self._sceneSnapshot.length, newValue: scenes.length, timestamp: now });
+    }
+
+    // Detect scene name/color changes
+    for (var i = 0; i < scenes.length; i++) {
+      var old = self._sceneSnapshot[i] || {};
+      if (old.name !== undefined && old.name !== scenes[i].name) {
+        self._engine.sendSyncDelta('scene_prop', { scene: i, prop: 'name', value: scenes[i].name });
+      }
+      if (old.color_index !== undefined && old.color_index !== scenes[i].color_index) {
+        self._engine.sendSyncDelta('scene_prop', { scene: i, prop: 'color', value: scenes[i].color_index });
+      }
+    }
+
+    self._sceneSnapshot = scenes;
+  }).catch(function() { self._extraBusy3 = false; });
 };
 
 // ---------------------------------------------------------------------------
