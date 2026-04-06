@@ -471,6 +471,16 @@ ParamSync.prototype._pollTrackClips = function(t) {
     }
 
     self._clipWatchSnapshot[t] = slots;
+
+    // --- Track fold/unfold state ---
+    if (result.fold_state !== undefined && result.fold_state !== null) {
+      if (!self._foldSnapshot) self._foldSnapshot = {};
+      if (self._foldSnapshot[t] !== undefined && self._foldSnapshot[t] !== result.fold_state) {
+        self._engine.sendSyncDelta('track_fold', { track: t, fold_state: result.fold_state });
+        self._emit('local_change', { track: t, param: 'fold', oldValue: self._foldSnapshot[t], newValue: result.fold_state, timestamp: now });
+      }
+      self._foldSnapshot[t] = result.fold_state;
+    }
   }).catch(function() { self._clipWatchBusy = false; });
 };
 
@@ -867,6 +877,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'routing': this._applyRouting(payload, now); break;
     case 'clip_prop': this._applyClipProp(payload, now); break;
     case 'return_param': this._applyReturnParam(payload, now); break;
+    case 'track_fold': this._applyTrackFold(payload, now); break;
   }
 };
 
@@ -1182,6 +1193,15 @@ ParamSync.prototype._applySceneProp = function(payload, now) {
   if (prop === 'name') this._writeClient.send('set_scene_name', { scene_index: scene, name: val }).catch(function(){});
   if (prop === 'color') this._writeClient.send('set_scene_color', { scene_index: scene, color_index: val }).catch(function(){});
   this._emit('remote_change', { track: -1, param: 'scene_' + prop, value: payload, timestamp: now });
+};
+
+ParamSync.prototype._applyTrackFold = function(payload, now) {
+  var t = payload.track, fold = payload.fold_state;
+  console.log('[param-sync] APPLY FOLD: T' + t + ' fold=' + fold);
+  this._writeClient.send('set_track_fold', { track_index: t, fold_state: fold }).catch(function(){});
+  if (!this._foldSnapshot) this._foldSnapshot = {};
+  this._foldSnapshot[t] = fold;
+  this._emit('remote_change', { track: t, param: 'fold', value: fold, timestamp: now });
 };
 
 ParamSync.prototype._applyReturnParam = function(payload, now) {
