@@ -390,13 +390,13 @@ CoLabEngine.prototype._processAlsSave = function() {
           source: 'local'
         });
 
-        // Send diff summary to peer via TCP
+        // Send full structured diff to peer via TCP (for applying changes)
         if (this._connected) {
           this.tcp.sendMessage(C.PKT.STATE_UPDATE, {
-            type: 'als_save',
+            type: 'als_diff_apply',
+            changes: diffResult.changes,
             changeCount: diffResult.changes.length,
-            summary: diffResult.summary,
-            text: this.differ.formatText(diffResult)
+            summary: diffResult.summary
           });
         }
       }

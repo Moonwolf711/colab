@@ -826,6 +826,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'clip_op':     this._applyRemoteClipOp(payload, now); break;
     case 'device_op':   this._applyRemoteDeviceOp(payload, now); break;
     case 'automation':  this._applyRemoteAutomation(payload, now); break;
+    case 'als_diff_apply': this._applyAlsDiff(payload, now); break;
   }
 };
 
@@ -1116,6 +1117,59 @@ ParamSync.prototype._applyRemoteAutomation = function(payload, now) {
 };
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ALS Diff Apply — process structured diffs from .als file saves
+// ---------------------------------------------------------------------------
+
+ParamSync.prototype._applyAlsDiff = function(payload, now) {
+  var changes = payload.changes || [];
+  if (changes.length === 0) return;
+
+  console.log('[param-sync] ALS DIFF: ' + changes.length + ' changes — ' + (payload.summary || ''));
+
+  var noteChanges = [];
+  var sampleChanges = [];
+
+  for (var i = 0; i < changes.length; i++) {
+    var cat = changes[i].category || '';
+    if (cat === 'note_added' || cat === 'note_removed' || cat === 'note_modified') {
+      noteChanges.push(changes[i]);
+    } else if (cat === 'sample') {
+      sampleChanges.push(changes[i]);
+    }
+  }
+
+  // Re-sync affected clips by reading notes from local and pushing to peer
+  if (noteChanges.length > 0) {
+    var clipMap = {};
+    for (var n = 0; n < noteChanges.length; n++) {
+      var match = (noteChanges[n].path || '').match(/Tracks\/(\d+)\/Clips?\/(\d+)/i);
+      if (match) {
+        var key = match[1] + ':' + match[2];
+        clipMap[key] = { track: parseInt(match[1]), clip: parseInt(match[2]) };
+      }
+    }
+    var peerIp = this._engine.peerIp;
+    var keys = Object.keys(clipMap);
+    for (var k = 0; k < keys.length; k++) {
+      var info = clipMap[keys[k]];
+      console.log('[param-sync] ALS DIFF: pushing notes T' + info.track + ':C' + info.clip);
+      if (peerIp) this._directClipPush(peerIp, info.track, info.clip, 4);
+    }
+  }
+
+  // Log sample changes for awareness
+  for (var s = 0; s < sampleChanges.length; s++) {
+    console.log('[param-sync] SAMPLE CHANGED: ' + sampleChanges[s].path + ' → ' + (sampleChanges[s].to || sampleChanges[s].summary));
+  }
+
+  this._emit('remote_change', {
+    track: -1, param: 'als_diff',
+    value: { total: changes.length, notes: noteChanges.length, samples: sampleChanges.length },
+    timestamp: now
+  });
+};
+
 // Helpers
 // ---------------------------------------------------------------------------
 
