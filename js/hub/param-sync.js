@@ -866,6 +866,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'scene_prop': this._applySceneProp(payload, now); break;
     case 'routing': this._applyRouting(payload, now); break;
     case 'clip_prop': this._applyClipProp(payload, now); break;
+    case 'return_param': this._applyReturnParam(payload, now); break;
   }
 };
 
@@ -1183,6 +1184,18 @@ ParamSync.prototype._applySceneProp = function(payload, now) {
   this._emit('remote_change', { track: -1, param: 'scene_' + prop, value: payload, timestamp: now });
 };
 
+ParamSync.prototype._applyReturnParam = function(payload, now) {
+  var ri = payload.return_index, param = payload.param, val = payload.value;
+  if (param === 'volume') this._writeClient.send('set_return_track_volume', { return_index: ri, volume: val }).catch(function(){});
+  if (param === 'pan') this._writeClient.send('set_return_track_pan', { return_index: ri, pan: val }).catch(function(){});
+  if (param === 'color') this._writeClient.send('set_return_track_color', { return_index: ri, color_index: val }).catch(function(){});
+  if (param === 'name') this._writeClient.send('set_return_track_name', { return_index: ri, name: val }).catch(function(){});
+  if (!this._returnSnapshot) this._returnSnapshot = [];
+  if (!this._returnSnapshot[ri]) this._returnSnapshot[ri] = {};
+  this._returnSnapshot[ri][param] = val;
+  this._emit('remote_change', { track: -3, param: 'return_' + param, value: val, timestamp: now });
+};
+
 ParamSync.prototype._applyClipProp = function(payload, now) {
   var t = payload.track, c = payload.clip, prop = payload.prop, val = payload.value;
   var cmdMap = {
@@ -1236,6 +1249,7 @@ ParamSync.prototype._pollExtra = function() {
   if (!this._extraBusy2) this._pollCrossfader();
   if (!this._extraBusy3) this._pollScenes();
   this._pollRouting();
+  this._pollReturnTracks();
 };
 
 ParamSync.prototype._pollMasterTrack = function() {
@@ -1315,6 +1329,34 @@ ParamSync.prototype._pollCrossfader = function() {
     }
     self._crossfaderSnapshot = val;
   }).catch(function() { self._extraBusy2 = false; });
+};
+
+ParamSync.prototype._pollReturnTracks = function() {
+  var self = this;
+  if (this._returnBusy) return;
+  this._returnBusy = true;
+  this._clipClient.send('get_return_tracks_info', {}).then(function(result) {
+    self._returnBusy = false;
+    var returns = (result && result.return_tracks) ? result.return_tracks : [];
+    if (returns.length === 0) return;
+    var now = Date.now();
+    if (!self._returnSnapshot) self._returnSnapshot = [];
+
+    for (var i = 0; i < returns.length; i++) {
+      var rt = returns[i];
+      var snap = self._returnSnapshot[i] || {};
+      var params = { volume: rt.volume, pan: rt.panning || 0, color: rt.color_index, name: rt.name };
+
+      for (var key in params) {
+        if (snap[key] !== undefined && snap[key] !== params[key]) {
+          self._engine.sendSyncDelta('return_param', { return_index: i, param: key, value: params[key] });
+          self._emit('local_change', { track: -3, param: 'return_' + key, oldValue: snap[key], newValue: params[key], timestamp: now });
+        }
+        snap[key] = params[key];
+      }
+      self._returnSnapshot[i] = snap;
+    }
+  }).catch(function() { self._returnBusy = false; });
 };
 
 ParamSync.prototype._pollRouting = function() {
