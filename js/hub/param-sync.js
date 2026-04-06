@@ -832,6 +832,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'master_device_param': this._applyMasterDeviceParam(payload, now); break;
     case 'crossfader': this._applyCrossfader(payload, now); break;
     case 'scene_prop': this._applySceneProp(payload, now); break;
+    case 'routing': this._applyRouting(payload, now); break;
   }
 };
 
@@ -1149,6 +1150,18 @@ ParamSync.prototype._applySceneProp = function(payload, now) {
   this._emit('remote_change', { track: -1, param: 'scene_' + prop, value: payload, timestamp: now });
 };
 
+ParamSync.prototype._applyRouting = function(payload, now) {
+  var t = payload.track, field = payload.field, val = payload.value;
+  // Build routing params — set_track_routing accepts all fields at once
+  var params = { track_index: t };
+  params[field] = val;
+  this._writeClient.send('set_track_routing', params).catch(function(){});
+  if (!this._routingSnapshot) this._routingSnapshot = {};
+  if (!this._routingSnapshot[t]) this._routingSnapshot[t] = {};
+  this._routingSnapshot[t][field] = val;
+  this._emit('remote_change', { track: t, param: 'routing_' + field, value: val, timestamp: now });
+};
+
 ParamSync.prototype._applyCrossfader = function(payload, now) {
   console.log('[param-sync] APPLY CROSSFADER: ' + payload.value);
   this._crossfaderSnapshot = payload.value;
@@ -1165,6 +1178,7 @@ ParamSync.prototype._pollExtra = function() {
   if (!this._extraBusy) this._pollMasterTrack();
   if (!this._extraBusy2) this._pollCrossfader();
   if (!this._extraBusy3) this._pollScenes();
+  this._pollRouting();
 };
 
 ParamSync.prototype._pollMasterTrack = function() {
@@ -1244,6 +1258,38 @@ ParamSync.prototype._pollCrossfader = function() {
     }
     self._crossfaderSnapshot = val;
   }).catch(function() { self._extraBusy2 = false; });
+};
+
+ParamSync.prototype._pollRouting = function() {
+  if (this._trackCount === 0) return;
+  var self = this;
+  if (!this._routingScanIdx) this._routingScanIdx = 0;
+  if (this._routingBusy) return;
+
+  var t = this._routingScanIdx % this._trackCount;
+  this._routingScanIdx = (this._routingScanIdx + 1) % this._trackCount;
+
+  this._routingBusy = true;
+  this._clipClient.send('get_track_routing', { track_index: t }).then(function(result) {
+    self._routingBusy = false;
+    if (!result) return;
+    var now = Date.now();
+    if (!self._routingSnapshot) self._routingSnapshot = {};
+    var snap = self._routingSnapshot[t] || {};
+    var fields = ['input_type', 'input_channel', 'output_type', 'output_channel', 'monitoring_state'];
+
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i];
+      var val = result[f];
+      if (val === undefined) continue;
+      if (snap[f] !== undefined && snap[f] !== val) {
+        self._engine.sendSyncDelta('routing', { track: t, field: f, value: val });
+        self._emit('local_change', { track: t, param: 'routing_' + f, oldValue: snap[f], newValue: val, timestamp: now });
+      }
+      snap[f] = val;
+    }
+    self._routingSnapshot[t] = snap;
+  }).catch(function() { self._routingBusy = false; });
 };
 
 ParamSync.prototype._pollScenes = function() {
