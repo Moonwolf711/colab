@@ -77,10 +77,15 @@ function AlsReplicator(options) {
 
   this._tcp = options.tcp || null;                 // TcpStack instance
   this._alsPath = options.alsPath || null;         // absolute path of the .als we own locally
-  this._maxBytes = options.maxBytes || DEFAULT_MAX_ALS_BYTES;
-  this._echoFifoSize = options.echoFifoSize || DEFAULT_ECHO_FIFO;
-  this._echoWindowMs = options.echoWindowMs || DEFAULT_ECHO_WINDOW_MS;
-  this._localSaveGraceMs = options.localSaveGraceMs || DEFAULT_LOCAL_SAVE_GRACE_MS;
+  // For numeric options, `0` is a meaningful value (e.g., disable the
+  // local-save grace window entirely for tests). The classic `||`
+  // fallback collapses 0 → default, which silently drops the test's
+  // intent. Use explicit undefined check for any numeric option where
+  // 0 is sensible.
+  this._maxBytes = options.maxBytes !== undefined ? options.maxBytes : DEFAULT_MAX_ALS_BYTES;
+  this._echoFifoSize = options.echoFifoSize !== undefined ? options.echoFifoSize : DEFAULT_ECHO_FIFO;
+  this._echoWindowMs = options.echoWindowMs !== undefined ? options.echoWindowMs : DEFAULT_ECHO_WINDOW_MS;
+  this._localSaveGraceMs = options.localSaveGraceMs !== undefined ? options.localSaveGraceMs : DEFAULT_LOCAL_SAVE_GRACE_MS;
 
   // Recent shas FIFO — entries are { sha: hex, at: epochMs }
   this._echoFifo = [];
