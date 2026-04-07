@@ -121,6 +121,25 @@ is incremental layering, not big-bang rewrite. A project becomes
 file in its directory; until then, it uses the legacy AlsReplicator
 path.
 
+## Dev hygiene: AbletonBridge env-var port patch
+
+If you're using AbletonBridge as the runtime overlay (currently the
+case until Phase 3+ when `colab-bridge-osc` lands), the bridge's
+hard-coded port 9877 collides when you try to run two Live instances
+on this machine. The patch lives at:
+
+> **`scripts/patch-abletonbridge.py`** (in this repo)
+
+Idempotent. Run `python scripts/patch-abletonbridge.py --check --all`
+to see the state of every known install on this machine, or
+`python scripts/patch-abletonbridge.py --all` to apply. After
+patching, launch the second Live with
+`set ABLETON_BRIDGE_PORT=9878 && "Ableton Live 12 Suite.exe" "test 2.als"`.
+
+This is a temporary scaffold — it goes away in v1 if Phase 3 pivots
+to AbletonOSC as the primary runtime observer. Until then it's the
+fastest way to make a fresh machine reproducible.
+
 ## Friend-First KPIs
 
 Success is measured against four numeric KPIs and four anti-metrics:
