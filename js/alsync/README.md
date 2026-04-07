@@ -1,12 +1,16 @@
-# js/alsync — JS bridge stub for the Rust alsync core
+# js/alsync — JS bridge stub for the colab-sync Rust workspace
 
 This directory is **intentionally empty of source code**.
 
 It is the landing zone for the **JS bridge layer** of the upcoming
-`.alsync` CRDT-based persistence layer. The bulk of the alsync
-implementation will live in a separate **Rust core** (running as a
-Windows service / native binary) — this directory holds only the JS
-glue that lets the existing colab Node stack talk to that core.
+`.alsync` CRDT-based persistence layer. The bulk of the implementation
+lives in a sibling **Cargo workspace at `~/colab/colab-sync/`** —
+8 Rust crates that share this repo. This directory holds only the
+JS glue that lets the existing colab Node stack talk to that workspace
+over UDP using the existing JSON-over-UDP convention.
+
+Neither the Rust workspace nor any source files in this directory
+exist yet. Both are gated on **Phase 0** — see § Status below.
 
 ## Why Rust + JS, not pure JS?
 
@@ -19,17 +23,22 @@ in the official `windows` crate (verified:
 but **no JavaScript runtime can host CFAPI directly** — it requires a
 real OS-level provider written in Rust or C++.
 
-So the architecture splits along the kernel boundary:
+So the architecture splits along the kernel boundary, with the Rust
+side organized as a Cargo workspace at `~/colab/colab-sync/` (8 crates):
 
-| Layer | Language | Where it lives |
+| Layer | Crate / file | Where it lives |
 |---|---|---|
-| CFAPI provider | Rust | New repo / sibling dir to `~/colab/`, NOT inside this dir |
-| Loro CRDT core | Rust (`loro` crate) | Same Rust binary |
-| Sample CAS (BLAKE3) | Rust | Same Rust binary |
-| AbletonOSC observer + sender | Rust | Same Rust binary |
-| **JS bridge to Rust core** | **JS** | **Here, when implementation begins** |
-| M4LNotifier, colab_livesync.js notifications | JS | `js/hub/` and `colab_livesync.js` — already exists |
-| param-sync.js runtime overlay | JS | `js/hub/param-sync.js` — already exists, unchanged in v0 |
+| CFAPI provider (Windows-only) | `colab-cfapi` | `~/colab/colab-sync/colab-cfapi/` — `#[cfg(target_os = "windows")]` so the workspace builds on Mac/Linux |
+| Loro doc + materializer + differ + VST blob hash dedupe | `colab-core` | `~/colab/colab-sync/colab-core/` |
+| Reliable TCP peer link + Ed25519 + TOFU peer registry | `colab-transport` | `~/colab/colab-sync/colab-transport/` |
+| BLAKE3 content-addressed sample store | `colab-cas` | `~/colab/colab-sync/colab-cas/` |
+| AbletonOSC namespace + observer integration | `colab-bridge-osc` | `~/colab/colab-sync/colab-bridge-osc/` |
+| M4L UDP 8001 dispatcher (replaces our M4LNotifier role) | `colab-bridge-m4l` | `~/colab/colab-sync/colab-bridge-m4l/` |
+| WASM target for browser viewers / late-join (Phase 4-7) | `colab-wasm` | `~/colab/colab-sync/colab-wasm/` |
+| CLI for ops + diagnostics (mirror of cli-anything-max) | `colab-cli` | `~/colab/colab-sync/colab-cli/` |
+| **JS bridge to Rust core** | `rust-bridge.js` (NEW) | **Here**, when implementation begins |
+| M4LNotifier, colab_livesync.js notifications | JS | `js/hub/` and `colab_livesync.js` — already exists, unchanged |
+| param-sync.js runtime overlay | JS | `js/hub/param-sync.js` — already exists, unchanged through Phase 6 |
 
 ## Why empty?
 
@@ -67,27 +76,78 @@ conflicts against speculative scaffolding.
 
 ## Status
 
-**BLOCKED on the unblock gate.**
+**BLOCKED on Phase 0.**
 
-The unblock gate is the **CFAPI + Live 12.x XML round-trip experiment**
-(documented in `~/tasks/alsync-architecture.md` § Unblock Gate). In
-short: prove that we can take a real Live 12.x `.als` file, parse it
-with the chosen XML library, re-emit it, gzip it back, open it in
-Live, and have Live accept the result with zero data loss and zero
-error dialogs. This is a 5-minute wall-clock experiment — but until
-it passes, every line of `.alsync` code is built against an unverified
-assumption.
+Phase 0 is the **CloudMirror + Live 12.x .als round-trip experiment**
+(documented in `~/tasks/alsync-architecture.md` § Phase 0). In short:
+build the Microsoft CloudMirror sample, project a known
+XML-roundtripped `.als` through it, open in Live 12.x, save, verify
+bytes. Single test that decides whether Strategy C (CFAPI placeholder
++ Live opens projected `.als` + saves cleanly + bytes verify) is
+viable. The 12-item risk register from the parallel research session
+ranks "Live rejecting the projected `.als`" as Risk #1 — the only
+true blocker for the entire architecture.
+
+Until Phase 0 passes:
+- `~/colab/colab-sync/` does **not** exist (`cargo new` is gated)
+- This directory has **no source files** beyond this README
+- No `loro` Rust crate or `loro-crdt` npm package is added anywhere
+- No CFAPI provider is registered
+
+Phase 0 is a 5-minute wall-clock experiment — but every line of code
+written before it passes is built against an unverified assumption.
+
+## Friend-First Roadmap (post-Phase 0)
+
+The implementation roadmap is reframed as **7 phases ending in
+friend-visible wins**, not technical-completeness milestones, per the
+parallel session's findings. Quick reference:
+
+| Phase | Friend-visible win |
+|---|---|
+| **Phase 0** | *(none)* — CloudMirror experiment passes, Strategy C verified |
+| **Phase 1** | *(none)* — `colab-core` + `colab-cas` ship as a passive observer |
+| **Phase 2** | *"I can put this in our shared folder"* — `colab-cfapi` provider lands |
+| **Phase 3** | *"we can both edit"* — `colab-transport` + `colab-bridge-osc` land |
+| **Phase 4** | *"I can join after you started"* — late-join via snapshot delivery |
+| **Phase 5** | *"your samples just appeared"* — `colab-cas` BLAKE3 sample distribution |
+| **Phase 6** | *"merging just works"* — saga pattern, conflict polish |
+| **Phase 7** | *"my friend on a Mac is jamming with me"* — Mac/Linux parity (FSEvents/FSKit replaces `colab-cfapi`) |
+
+Throughout Phases 1-6, **Layer 2 (`colab-sync`) sits alongside Layer 1
+(the existing colab JS stack), which keeps working untouched.** This
+is incremental layering, not big-bang rewrite. A project becomes
+"colab-sync managed" the first time the Rust core writes a `.alsync`
+file in its directory; until then, it uses the legacy AlsReplicator
+path.
+
+## Friend-First KPIs
+
+Success is measured against four numeric KPIs and four anti-metrics:
+
+| KPI | Target |
+|---|---|
+| Time to first jam | < 60 s |
+| Time to merged save | < 2 s LAN |
+| Ableton restarts forced | 0 |
+| XML round-trips losing data | 0 |
+
+**Anti-metrics** (we are explicitly NOT optimizing for):
+feature count, user count, cloud uptime, telemetry coverage.
+
+The full rationale lives in `~/tasks/alsync-architecture.md`
+§ Friend-First KPIs and Anti-Metrics.
 
 ## What gets built here, eventually
 
-When the gate passes (and after spec reconciliation at step 6):
+When Phase 0 passes (and after spec reconciliation at step 06):
 
 | File | Purpose |
 |---|---|
-| `rust-bridge.js` | Bidirectional UDP socket pair to the Rust core. Sends commands ("export current state", "apply this op batch"). Receives notifications ("peer saved", "merge applied", "destructive op rejected, retry needed"). Wire format = same JSON-over-UDP convention the existing CoLaB hub uses on UDP 8001. |
+| `rust-bridge.js` | Bidirectional UDP socket pair to `colab-bridge-m4l`. Sends commands ("export current state", "apply this op batch"). Receives notifications ("peer saved", "merge applied", "destructive op rejected, retry needed"). Wire format = same JSON-over-UDP convention the existing CoLaB hub uses on UDP 8001. |
 
 That is the **only file** that will live in this directory. Everything
-else is in the Rust core (separate binary, separate repo or directory).
+else is in the Rust workspace at `~/colab/colab-sync/`.
 
 ## What does NOT change in the existing colab JS stack
 
@@ -115,35 +175,59 @@ bridge layer:
 
 ## Why this is gated, not optimistic
 
-The other research session's integration patterns findings surfaced
-**4 CFAPI gotchas** that are documented but partially undocumented in
-Microsoft's own materials:
+The parallel research session surfaced multiple traps that have to
+be designed against from the first commit, not debugged after the
+fact. Each one alone is enough to stall the build for days; together
+they're a hard "do not start coding yet" signal.
 
+**4 CFAPI gotchas** (Microsoft Q&A threads):
 1. NTFS-compressed files break TRANSFER_DATA
 2. FETCH_DATA cannot alter file size mid-flight
 3. FETCH_PLACEHOLDERS fires repeatedly on directory enumeration
 4. VALIDATE_DATA semantics partially undocumented
 
-Plus one CVE: **CVE-2025-55680** in cldflt.sys is a TOCTOU privilege
-escalation, which means CFAPI callback parameters need to be treated
-as semi-untrusted.
+**1 CVE**: CVE-2025-55680 in cldflt.sys is a TOCTOU privilege
+escalation. Treat CFAPI callback parameters as semi-untrusted. Validate
+every length, every offset, every path before acting on it.
 
-Plus the AbletonOSC ↔ Loro causal-broadcast separation rule: if you
-mix UDP observer events into the Loro op stream, the doc tree
-desyncs within minutes. There is no way to recover from this without
-a full snapshot restore.
+**Two-protocol layering rule**: Loro ops on reliable TCP =
+canonical truth; AbletonOSC observer events on unreliable UDP =
+hint, not truth. Mix them and the Loro doc tree desyncs within
+minutes. No recovery without a full snapshot restore.
 
-These are not problems that can be debugged after they happen — they
-need to be designed against from the first commit. That's why we wait
-for the spec to reconcile at step 6 before any code lands.
+**VST blob noise**: VST plugin data churns in the .als XML on every
+save even when nothing meaningful changed. The differ MUST hash VST
+blobs and only emit Loro ops on hash change. Without this rule, the
+Loro doc fills with garbage and "time to merged save < 2 s LAN" is
+unreachable. Citation: [mark_henry's Ableton Live + Git experiment](https://medium.com/@mark_henry/ableton-live-git-a-match-made-in-someplace-or-the-great-ableton-git-experiment-5a20dfe2734c).
+
+**CloudMirror clean-state hazard**: per the [microsoft/Windows-classic-samples CloudMirror sample README](https://github.com/microsoft/Windows-classic-samples/tree/main/Samples/CloudMirror),
+"if you hydrated some files while testing and then shut down the
+sample, you should delete everything from the sync root folder
+before re-running." Every CFAPI integration test must start with a
+clean sync root. Stale placeholders cause silent corruption that's
+hard to debug.
+
+**12-item risk register**: the parallel research session ranks
+"Live rejecting the projected `.als`" as Risk #1 — the only true
+blocker for the architecture. Phase 0 resolves Risk #1, pass or fail.
+
+That's why we wait for the spec to reconcile at step 06 (formal
+synthesis step in the parallel research workflow) and Phase 0 to
+pass before any code lands. Both gates exist for a reason.
 
 ## Next concrete action
 
-1. Other session runs the CFAPI + Live 12.x round-trip experiment
-2. Result reconciled with `~/tasks/alsync-architecture.md` at step 6
-3. `cargo new alsync-core --lib` (in a sibling directory, NOT in this
-   repo)
-4. Implementation begins in the Rust core; this directory gets
-   `rust-bridge.js` last to wire the JS side
+1. Parallel research session runs Phase 0 (CloudMirror + Live 12.x
+   .als round-trip experiment)
+2. Result reconciled with `~/tasks/alsync-architecture.md` at step 06
+   synthesis (per `step-06-research-synthesis.md` in the technical
+   steps folder)
+3. `cd ~/colab && cargo new --lib colab-sync && cd colab-sync` —
+   set up the workspace + 8 crates
+4. Phase 1 starts: `colab-core` + `colab-cas` as a passive observer
+5. Phase 2 lands `colab-cfapi`, gives the first friend-visible win
+6. This directory gets `rust-bridge.js` during Phase 3 to wire the
+   JS side
 
 Until then, this README is the only file here.
