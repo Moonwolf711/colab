@@ -28,6 +28,7 @@ var TcpStack = require('./tcp-stack');
 var pcm = require('./pcm-stream');
 var AlsDiffer = require('./als-differ');
 var AlsGit = require('./als-git');
+var AlsReplicator = require('./als-replicator');
 var AssetResolver = require('./asset-resolver');
 var SyncController = require('./sync-controller');
 var C = require('../shared/constants');
@@ -86,6 +87,15 @@ function CoLabEngine(options) {
     remote: options.gitRemote || 'origin',
     branch: options.gitBranch || 'main',
     commitPrefix: options.commitPrefix || '[coLaB]'
+  });
+
+  // AlsReplicator — LAN file-level sync of the .als set. Handed the tcp
+  // stack and the local .als path so remote frames land on the right
+  // target. See ~/tasks/colab-als-sync-plan.md.
+  this.alsReplicator = new AlsReplicator({
+    tcp: this.tcp,
+    alsPath: null, // set in start() once _alsFullPath is resolved
+    maxBytes: options.alsMaxBytes || (256 * 1024 * 1024)
   });
 
   this.assets = new AssetResolver(null);
@@ -331,8 +341,49 @@ CoLabEngine.prototype._wireSubsystems = function() {
       summary: diffResult.summary,
       text: self.differ.formatText(diffResult)
     });
+
+    // ALSO push the diff as a STATE_UPDATE so the peer's param-sync
+    // _onPeerState switch hits case 'als_diff_apply' and can use it
+    // for notification / targeted re-sync. This was the dead code path
+    // at param-sync.js:872 that never had a sender.
+    if (self._connected) {
+      self.tcp.sendMessage(C.PKT.STATE_UPDATE, {
+        type: 'als_diff_apply',
+        changes: diffResult.changes,
+        summary: diffResult.summary
+      });
+    }
   });
   this.git.onError(function(err) { self._emit('git_error', err); });
+
+  // --- AlsReplicator: raw .als bytes on save → peer via tcp.DATA ---
+  this.git.onRawSave(function(buffer, alsPath) {
+    // Only replicate when we're actually connected to a peer.
+    if (!self._connected) return;
+    self.alsReplicator.sendSet(buffer, alsPath);
+  });
+  this.alsReplicator.on('sent', function(info) {
+    self._emit('als_replicated', { direction: 'out', bytes: info.bytes, sha: info.sha, name: info.name });
+  });
+  this.alsReplicator.on('remote_save', function(info) {
+    self._emit('als_replicated', { direction: 'in', bytes: info.bytes, sha: info.sha256, name: info.name, path: info.path });
+    // Surface to M4L / terminal via existing state channel, so a
+    // future UI popup can pick it up ("Peer saved — reopen to see").
+    if (self._connected) {
+      self.tcp.sendMessage(C.PKT.STATE_UPDATE, {
+        type: 'als_replicated_ack',
+        bytes: info.bytes,
+        name: info.name,
+        sha: info.sha256
+      });
+    }
+  });
+  this.alsReplicator.on('drop', function(info) {
+    self._emit('als_replicator_drop', info);
+  });
+  this.alsReplicator.on('error', function(info) {
+    self._emit('als_replicator_error', info);
+  });
 
   // --- Audio events ---
   this.udp.on('audio', function(data) {
@@ -416,6 +467,11 @@ CoLabEngine.prototype._startGitWatcher = function() {
   this.git.ensureGitignore();
   this.git.ensureGitattributes();
   this.git.watch(this._alsFullPath);
+  // Hand the same .als path to the replicator so remote frames land
+  // on the right local file.
+  if (this.alsReplicator) {
+    this.alsReplicator.setAlsPath(this._alsFullPath);
+  }
 };
 
 // ---------------------------------------------------------------------------
