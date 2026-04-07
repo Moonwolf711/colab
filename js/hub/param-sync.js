@@ -588,10 +588,113 @@ ParamSync.prototype._pollDeep = function() {
   // Note polling: rotate through ALL tracks that have clips
   if (this._layerEnabled.notes) this._pollNotesRotation();
 
-  // Automation on focused clip only
+  // Automation — TWO layers:
+  //   (1) focused clip, polled every tick at 4 Hz for tight loop feel
+  //   (2) rotation through all tracks at 1-track-per-tick for broad coverage
+  // Both reuse the same `sendSyncDelta('automation', ...)` dispatch type
+  // and the same `_applyRemoteAutomation` receiver.
   var t = this._focusedTrack;
   if (this._layerEnabled.automation && t >= 0 && t < this._trackCount && this._focusedClip >= 0) {
     this._pollClipAutomation(t, this._focusedClip);
+  }
+  if (this._layerEnabled.automation) {
+    this._pollAutomationAllTracksTick();
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Automation — all-tracks rotation (Phase 1 C1 of colab-als-sync-plan.md)
+// ---------------------------------------------------------------------------
+//
+// The existing _pollClipAutomation polls only the focused clip. That's
+// great for tight-loop editing but leaves the other 30 tracks' automation
+// un-synced in the live session. This rotation visits one track per deep
+// tick, polling automation on whichever clip slot is currently populated
+// (first populated slot wins), so over ~8 seconds we cover the full set.
+//
+// The per-track throttle below guarantees we don't revisit the same track
+// more than once every 6 s even if the track count is small, keeping
+// AbletonBridge load bounded.
+
+var AUTO_ALL_MIN_INTERVAL_MS = 6000;
+var AUTO_ALL_PARAMS_PER_DEVICE = 8; // broader than focused (4) but still bounded
+
+ParamSync.prototype._pollAutomationAllTracksTick = function() {
+  if (this._trackCount === 0) return;
+  if (this._autoScanIndex === undefined) this._autoScanIndex = 0;
+  if (!this._lastAutoPoll) this._lastAutoPoll = {};
+
+  var trackIdx = this._autoScanIndex % this._trackCount;
+  this._autoScanIndex = (this._autoScanIndex + 1) % this._trackCount;
+
+  // Skip the focused track — the focused poll already hits it at 4 Hz.
+  if (trackIdx === this._focusedTrack) return;
+
+  var now = Date.now();
+  if (this._lastAutoPoll[trackIdx] && (now - this._lastAutoPoll[trackIdx]) < AUTO_ALL_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  // Find a populated clip on this track.
+  var clipList = this._clipListSnapshot[trackIdx] || [];
+  var clipIdx = -1;
+  for (var i = 0; i < clipList.length; i++) {
+    if (clipList[i] && clipList[i].has_clip) { clipIdx = i; break; }
+  }
+  if (clipIdx < 0) return;
+
+  // ECHO GUARD
+  if (this._isLocked(this._clipSlotKey(trackIdx, clipIdx))) return;
+
+  this._lastAutoPoll[trackIdx] = now;
+  this._pollClipAutomationBroad(trackIdx, clipIdx);
+};
+
+/**
+ * Wider version of _pollClipAutomation — polls up to
+ * AUTO_ALL_PARAMS_PER_DEVICE params on the first device of this track's
+ * clip, reusing the same 'automation' dispatch type so the receiver side
+ * needs no new case in _onPeerState.
+ */
+ParamSync.prototype._pollClipAutomationBroad = function(trackIdx, clipIdx) {
+  var deviceList = this._deviceListSnapshot[trackIdx];
+  if (!deviceList || deviceList.length === 0) return;
+
+  var self = this;
+  var devIdx = 0;
+  var snapKey = trackIdx + ':' + devIdx;
+  var deviceParams = this._deviceSnapshot[snapKey];
+  if (!deviceParams) return;
+
+  var paramNames = Object.keys(deviceParams).slice(0, AUTO_ALL_PARAMS_PER_DEVICE);
+  for (var i = 0; i < paramNames.length; i++) {
+    (function(paramName) {
+      self._client.getClipAutomation(trackIdx, clipIdx, paramName).then(function(result) {
+        if (!result || !result.has_automation) return;
+        var points = result.points || [];
+        if (points.length === 0) return;
+
+        var now = Date.now();
+        var key = trackIdx + ':' + clipIdx + ':' + paramName;
+        var hash = self._hashPoints(points);
+
+        if (self._autoSnapshot[key] && self._autoSnapshot[key] !== hash) {
+          var suppressKey = 'auto:' + key;
+          if (!self._isSuppressed(suppressKey, now)) {
+            self._recentLocalChange[suppressKey] = now;
+            self._engine.sendSyncDelta('automation', {
+              track: trackIdx, clip: clipIdx, param_name: paramName, points: points, source: 'all_tracks'
+            });
+            self._emit('local_change', {
+              track: trackIdx, param: 'automation',
+              oldValue: null, newValue: points.length + ' points', timestamp: now, source: 'all_tracks'
+            });
+          }
+        }
+
+        self._autoSnapshot[key] = hash;
+      }).catch(function() {});
+    })(paramNames[i]);
   }
 };
 
@@ -1448,50 +1551,57 @@ ParamSync.prototype._pollScenes = function() {
 // ---------------------------------------------------------------------------
 
 ParamSync.prototype._applyAlsDiff = function(payload, now) {
-  var changes = payload.changes || [];
+  // Phase 1 of colab-als-sync-plan.md: this handler was previously a
+  // reverse-push using a direct HTTP call to peerIp:3030/api/ableton/command
+  // which assumed the peer was running web-bridge AND served a compatible
+  // endpoint. It's gone — with the new AlsReplicator the full .als bytes
+  // are shipped on save via tcp CH.DATA, so we don't need to re-poll the
+  // clips here. This handler now exists purely as a *notification* so
+  // dashboards and the activity log know a peer saved and what changed.
+
+  var changes = (payload && payload.changes) || [];
   if (changes.length === 0) return;
 
-  console.log('[param-sync] ALS DIFF: ' + changes.length + ' changes — ' + (payload.summary || ''));
-
-  var noteChanges = [];
-  var sampleChanges = [];
+  var noteChanges = 0;
+  var sampleChanges = 0;
+  var trackChanges = 0;
+  var deviceChanges = 0;
+  var clipChanges = 0;
 
   for (var i = 0; i < changes.length; i++) {
-    var cat = changes[i].category || '';
+    var cat = (changes[i] && changes[i].category) || '';
     if (cat === 'note_added' || cat === 'note_removed' || cat === 'note_modified') {
-      noteChanges.push(changes[i]);
+      noteChanges++;
     } else if (cat === 'sample') {
-      sampleChanges.push(changes[i]);
+      sampleChanges++;
+    } else if (cat === 'track') {
+      trackChanges++;
+    } else if (cat === 'device') {
+      deviceChanges++;
+    } else if (cat === 'clip') {
+      clipChanges++;
     }
   }
 
-  // Re-sync affected clips by reading notes from local and pushing to peer
-  if (noteChanges.length > 0) {
-    var clipMap = {};
-    for (var n = 0; n < noteChanges.length; n++) {
-      var match = (noteChanges[n].path || '').match(/Tracks\/(\d+)\/Clips?\/(\d+)/i);
-      if (match) {
-        var key = match[1] + ':' + match[2];
-        clipMap[key] = { track: parseInt(match[1]), clip: parseInt(match[2]) };
-      }
-    }
-    var peerIp = this._engine.peerIp;
-    var keys = Object.keys(clipMap);
-    for (var k = 0; k < keys.length; k++) {
-      var info = clipMap[keys[k]];
-      console.log('[param-sync] ALS DIFF: pushing notes T' + info.track + ':C' + info.clip);
-      if (peerIp) this._directClipPush(peerIp, info.track, info.clip, 4);
-    }
-  }
-
-  // Log sample changes for awareness
-  for (var s = 0; s < sampleChanges.length; s++) {
-    console.log('[param-sync] SAMPLE CHANGED: ' + sampleChanges[s].path + ' → ' + (sampleChanges[s].to || sampleChanges[s].summary));
-  }
+  console.log(
+    '[param-sync] ALS DIFF notify: ' + changes.length + ' changes' +
+    ' (notes=' + noteChanges + ' samples=' + sampleChanges +
+    ' tracks=' + trackChanges + ' devices=' + deviceChanges +
+    ' clips=' + clipChanges + ') — ' + (payload.summary || '')
+  );
 
   this._emit('remote_change', {
-    track: -1, param: 'als_diff',
-    value: { total: changes.length, notes: noteChanges.length, samples: sampleChanges.length },
+    track: -1,
+    param: 'als_diff',
+    value: {
+      total: changes.length,
+      notes: noteChanges,
+      samples: sampleChanges,
+      tracks: trackChanges,
+      devices: deviceChanges,
+      clips: clipChanges,
+      summary: payload.summary || null
+    },
     timestamp: now
   });
 };
