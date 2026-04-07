@@ -37,7 +37,11 @@ function t(name, ok, detail) {
 }
 function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
 
-function randomPort() { return 40000 + Math.floor(Math.random() * 20000); }
+// Sequential port allocator — avoids the within-run collisions that
+// pure-random ports get with as few as 6 tests on a single Math.random
+// stream. Starts high and walks up.
+var _nextPort = 41100 + Math.floor(Math.random() * 5000);
+function randomPort() { _nextPort += 7; return _nextPort; }
 
 // ---------------------------------------------------------------------------
 // Harness: spin up two TcpStack instances and two AlsReplicators
@@ -271,6 +275,159 @@ async function testOversizeDrop() {
 }
 
 // ---------------------------------------------------------------------------
+// Property-based invariants — proptest-style, build the test muscle for the
+// upcoming Rust workspace's Tier 1 (proptest CRDT convergence) tests.
+//
+// These don't use a real proptest framework; they exercise N randomized
+// inputs through the system and assert invariants hold across the full
+// sample. Deterministic inputs (seeded RNG would be ideal but Buffer.alloc
+// + Math.random gives reproducible-enough behavior for unit testing).
+// ---------------------------------------------------------------------------
+
+async function testIdempotenceUnderRepeatedSends() {
+  console.log('\n── Test 5: idempotence under repeated sends of identical buffers ──');
+  // Property: sending the same buffer N times in a row is observationally
+  // equivalent to sending it once. Echo guard catches the duplicates;
+  // peer B's remote_save fires exactly once; the file on disk is the
+  // expected bytes; no double-applies.
+  //
+  // Why this matters for the Rust workspace: Loro op application MUST
+  // be idempotent (same op applied twice is a no-op). The replicator
+  // layer's echo guard is the JS analogue — same property at a
+  // different level of the stack.
+  var pair = buildPair(randomPort(), { localSaveGraceMs: 0 });
+
+  try {
+    await waitConnected(pair);
+
+    var bytes = crypto.randomBytes(8 * 1024);
+    var expectedSha = crypto.createHash('sha256').update(bytes).digest('hex');
+
+    var receivedOnB = [];
+    pair.repB.on('remote_save', function(info) { receivedOnB.push(info); });
+
+    // Fire 5 sends of the same buffer back-to-back. Only the first
+    // should land on peer B; the rest are caught by the echo FIFO on
+    // peer A's _isRecentLocalSha check OR (if A's check passes because
+    // FIFO TTL expired) caught by peer B's same check.
+    var REPEAT_N = 5;
+    for (var i = 0; i < REPEAT_N; i++) {
+      pair.repA.sendSet(bytes, pair.pathA);
+    }
+    await sleep(300);
+
+    // Invariant 1: peer B observes exactly ONE remote_save, regardless
+    // of how many times peer A sent.
+    t('Invariant: N identical sends → 1 remote_save (got ' + receivedOnB.length + ')',
+      receivedOnB.length === 1);
+
+    // Invariant 2: the on-disk file has the right bytes.
+    var written = fs.readFileSync(pair.pathB);
+    t('Invariant: file on disk has expected SHA',
+      crypto.createHash('sha256').update(written).digest('hex') === expectedSha);
+
+    // Invariant 3: peer A counts all N sends as "sent" but at most one
+    // round-trips. (The echo guard happens on RECEIVE, so peer A's
+    // sent counter still increments — that's correct: we sent the
+    // bytes, the kernel just dropped them on the floor on the other
+    // side.)
+    t('Invariant: peerA.stats.sent === ' + REPEAT_N,
+      pair.repA.stats.sent === REPEAT_N,
+      'got ' + pair.repA.stats.sent);
+    t('Invariant: peerB.stats.received === 1',
+      pair.repB.stats.received === 1,
+      'got ' + pair.repB.stats.received);
+  } finally {
+    destroyPair(pair);
+  }
+}
+
+async function testConvergenceUnderAlternatingMutations() {
+  console.log('\n── Test 6: convergence under K alternating mutations ──');
+  // Property: after K rounds where each round mutates one peer's bytes
+  // and waits for replication, both peers' files have the same SHA at
+  // the end of each round, AND that SHA equals the LAST mutation's SHA
+  // (LWW per the design).
+  //
+  // Why this matters for the Rust workspace: the convergence property
+  // is the SINGLE most important CRDT invariant. Loro will give us
+  // commutative+associative+idempotent merge for free, but we need
+  // to assert "after a sequence of mutations on alternating peers,
+  // the doc tree matches on both sides" at every layer that handles
+  // mutations.
+  var pair = buildPair(randomPort(), { localSaveGraceMs: 0 });
+
+  try {
+    await waitConnected(pair);
+
+    // Seed peerA.als so sha256File works on the source side too —
+    // in real life Live wrote both files before the replicator
+    // started. The test's buildPair only seeds peerB.
+    fs.writeFileSync(pair.pathA, Buffer.alloc(0));
+
+    var ROUNDS = 6;  // alternating: A, B, A, B, A, B
+    var lastExpectedSha = null;
+
+    for (var round = 0; round < ROUNDS; round++) {
+      var writeOnA = (round % 2 === 0);
+      var writeToPath = writeOnA ? pair.pathA : pair.pathB;
+      var fromRep = writeOnA ? pair.repA : pair.repB;
+      var newBytes = crypto.randomBytes(4 * 1024 + Math.floor(Math.random() * 4 * 1024));
+      var newSha = crypto.createHash('sha256').update(newBytes).digest('hex');
+
+      // In the real flow, Live writes the .als and then als-git's
+      // fs.watch picks it up and feeds the buffer to AlsReplicator.
+      // We're skipping fs.watch here (tested in
+      // test/two-peer-real-files-test.js) so we mirror what fs.watch
+      // would do: write the bytes to disk on the source side, THEN
+      // hand the buffer to sendSet.
+      fs.writeFileSync(writeToPath, newBytes);
+      var sendOk = fromRep.sendSet(newBytes, writeToPath);
+      await sleep(250);
+
+      // Debug: print stats so directional bugs surface clearly
+      if (!sendOk) {
+        console.log('    [debug] round ' + round + ' sendSet returned false; ' +
+                    'src stats: ' + JSON.stringify(fromRep.stats));
+      }
+
+      // After replication settles, both files should have identical
+      // SHAs equal to the bytes we just wrote.
+      var shaA = sha256File(pair.pathA);
+      var shaB = sha256File(pair.pathB);
+      var converged = (shaA === shaB);
+      if (!converged) {
+        console.log('    [debug] round ' + round + ' divergence:');
+        console.log('      repA stats: ' + JSON.stringify(pair.repA.stats));
+        console.log('      repB stats: ' + JSON.stringify(pair.repB.stats));
+      }
+      t('Round ' + round + ' (' + (writeOnA ? 'A→B' : 'B→A') + '): peers converge to same SHA',
+        converged,
+        'A=' + shaA.slice(0, 12) + ' B=' + shaB.slice(0, 12));
+      t('Round ' + round + ': converged SHA matches the last write',
+        shaA === newSha,
+        'expected ' + newSha.slice(0, 12) + ' got ' + shaA.slice(0, 12));
+
+      lastExpectedSha = newSha;
+    }
+
+    // Final state invariant — same as the last round's checks but
+    // explicit so the test summary tells the eye what to look for.
+    t('FINAL: both peers converge after ' + ROUNDS + ' alternating rounds',
+      sha256File(pair.pathA) === sha256File(pair.pathB) &&
+      sha256File(pair.pathA) === lastExpectedSha);
+  } finally {
+    destroyPair(pair);
+  }
+}
+
+function _writeShaCheck() {} // satisfies the linter; helper used inline above
+
+function sha256File(p) {
+  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -282,6 +439,8 @@ async function run() {
     await testEchoGuardSha();
     await testLocalSaveGraceWindow();
     await testOversizeDrop();
+    await testIdempotenceUnderRepeatedSends();
+    await testConvergenceUnderAlternatingMutations();
   } catch (e) {
     console.log('\n!! HARNESS ERROR: ' + e.message);
     console.log(e.stack);

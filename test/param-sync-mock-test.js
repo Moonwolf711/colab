@@ -437,6 +437,147 @@ function testHashWarpMarkersStability() {
 }
 
 // ---------------------------------------------------------------------------
+// Test 8: hash determinism under randomized inputs (proptest-style)
+// ---------------------------------------------------------------------------
+//
+// Property: for any sequence of N randomized marker lists, the hash
+// function MUST be:
+//   1. Deterministic — same input → same hash, every time, across N
+//      independent invocations
+//   2. Distinguishing — different inputs → different hashes (collision
+//      should be vanishingly rare for our use case)
+//   3. Order-sensitive — currently the hash takes list order into
+//      account; this is a known limitation that two peers receiving
+//      the same markers in different order will hash differently.
+//      Documented here so a future Loro-backed version can promote
+//      to order-insensitive without surprise.
+//
+// Why this matters for the Rust workspace: when colab-core::als_differ
+// hashes VST blobs and warp marker lists, the same property MUST hold
+// in Rust — same bytes/structure → same BLAKE3 hash, regardless of
+// invocation count or invocation order. This JS test validates the
+// property at the existing JS surface so the muscle memory is in place
+// when the Rust port lands.
+
+function _seededRng(seed) {
+  // Tiny LCG so this test is reproducible across runs.
+  var s = seed >>> 0;
+  return function() {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+}
+
+function _randomMarkers(rng, count) {
+  var out = [];
+  for (var i = 0; i < count; i++) {
+    out.push({
+      beat_time: Math.floor(rng() * 1000) / 100,    // 0.00..9.99 beats
+      sample_time: Math.floor(rng() * 1000000)       // 0..999999 samples
+    });
+  }
+  return out;
+}
+
+function testHashDeterminismProperty() {
+  console.log('\n══ Test 8: hash determinism property under randomized inputs ══');
+  var ctx = makeParamSync();
+  var rng = _seededRng(0xdeadbeef);
+
+  var SAMPLES = 50;
+  var fingerprints = [];
+  var allHashes = [];
+
+  // Generate 50 different marker lists, each with 1-12 markers
+  for (var i = 0; i < SAMPLES; i++) {
+    var n = 1 + Math.floor(rng() * 12);
+    var markers = _randomMarkers(rng, n);
+    fingerprints.push(JSON.stringify(markers));
+    allHashes.push(ctx.ps._hashWarpMarkers(markers));
+  }
+
+  // Property 1: deterministic — re-hash each list and compare
+  var deterministic = true;
+  for (var j = 0; j < SAMPLES; j++) {
+    var markers2 = JSON.parse(fingerprints[j]);
+    var rehash = ctx.ps._hashWarpMarkers(markers2);
+    if (rehash !== allHashes[j]) {
+      deterministic = false;
+      console.log('    FAIL: sample ' + j + ' hashed differently on re-run: ' +
+        allHashes[j].slice(0, 16) + ' vs ' + rehash.slice(0, 16));
+      break;
+    }
+  }
+  t('Property 1: deterministic over ' + SAMPLES + ' samples (same input → same hash)', deterministic);
+
+  // Property 2: distinguishing — count unique hashes vs unique inputs
+  var uniqueInputs = new Set(fingerprints).size;
+  var uniqueHashes = new Set(allHashes).size;
+  t('Property 2: distinguishing — every unique input has a unique hash',
+    uniqueHashes === uniqueInputs,
+    'inputs=' + uniqueInputs + ' hashes=' + uniqueHashes);
+
+  // Property 3: order-sensitive (documented current behavior). Pick a
+  // marker list with 2+ entries, reverse it, hash both, assert different.
+  var ordered = _randomMarkers(_seededRng(0xc0ffee), 4);
+  var reversed = ordered.slice().reverse();
+  var orderedHash = ctx.ps._hashWarpMarkers(ordered);
+  var reversedHash = ctx.ps._hashWarpMarkers(reversed);
+  t('Property 3: order-sensitive (current behavior — Loro port may promote to order-insensitive)',
+    orderedHash !== reversedHash);
+
+  console.log('    [info] sample size=' + SAMPLES + ', unique inputs=' + uniqueInputs +
+    ', unique hashes=' + uniqueHashes);
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: warp markers apply round-trip preservation
+// ---------------------------------------------------------------------------
+//
+// Property: for any marker list M, _applyRemoteWarpMarkers(M) → the
+// mock client's stored markers contain exactly M (same data, same
+// length). The Loro-backed version of this in the Rust workspace will
+// have the same property because Loro container assignment is
+// idempotent and content-preserving.
+
+async function testApplyWarpMarkersRoundTrip() {
+  console.log('\n══ Test 9: apply warp markers round-trip property ══');
+  var rng = _seededRng(0xfeedface);
+  var ROUNDS = 8;
+
+  for (var round = 0; round < ROUNDS; round++) {
+    var ctx = makeParamSync();
+    var markerCount = 1 + Math.floor(rng() * 8);
+    var markers = _randomMarkers(rng, markerCount);
+    var payload = {
+      track: round,
+      clip: 0,
+      markers: markers,
+      warp_mode: 'beats',
+      hash: 'p' + round
+    };
+    ctx.ps._applyRemoteWarpMarkers(payload, Date.now());
+    await sleep(20);
+
+    var stored = ctx.mock.warpMarkers[round + ':0'] || [];
+    if (stored.length !== markers.length) {
+      t('Round ' + round + ': mock has ' + markers.length + ' markers stored',
+        false, 'got ' + stored.length);
+      continue;
+    }
+    var allMatch = true;
+    for (var k = 0; k < markers.length; k++) {
+      if (stored[k].beat_time !== markers[k].beat_time ||
+          stored[k].sample_time !== markers[k].sample_time) {
+        allMatch = false;
+        break;
+      }
+    }
+    t('Round ' + round + ' (' + markerCount + ' markers): apply → stored data matches input', allMatch);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -450,6 +591,8 @@ async function run() {
     await testAutomationAllTracksRotation();
     await testPollClipNotesUsesExtended();
     testHashWarpMarkersStability();
+    testHashDeterminismProperty();
+    await testApplyWarpMarkersRoundTrip();
   } catch (e) {
     console.log('\n!! HARNESS ERROR: ' + e.message);
     console.log(e.stack);
