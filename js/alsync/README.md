@@ -40,13 +40,33 @@ side organized as a Cargo workspace at `~/colab/colab-sync/` (8 crates):
 | M4LNotifier, colab_livesync.js notifications | JS | `js/hub/` and `colab_livesync.js` — already exists, unchanged |
 | param-sync.js runtime overlay | JS | `js/hub/param-sync.js` — already exists, unchanged through Phase 6 |
 
+## Authoritative reference
+
+The **authoritative architecture reference** for coLaB Layer 2 lives at:
+
+> **`C:\Users\Owner\_bmad-output\planning-artifacts\research\technical-colab-crdt-als-cfapi-research-2026-04-07.md`**
+>
+> 1,352 lines, ~25,000 words, 100+ cited URLs, 9 top-level sections, full
+> confidence framework, step 6 of the technical research workflow complete
+> (2026-04-07).
+
+This is the document the implementation work is gated on. It defines the
+file format, the 8-crate Cargo workspace layout, the alsdiff schema porting
+target, the CFAPI integration boundary, the friend-first roadmap, the
+risk register, the success criteria, and the unblock-gate experiment
+(Phase 0). **Read it before touching any code in this directory.**
+
+A parallel architecture spec landed at `~/tasks/alsync-architecture.md`
+during the research workflow as the second input to step 6 synthesis.
+That file is preserved for audit trail — it shows where the parallel
+spec aligned with the canonical doc in advance of synthesis (15 of 16
+architectural decisions matched). For implementation, **follow the
+canonical doc, not the parallel spec**.
+
 ## Why empty?
 
-The full architecture spec lives at:
-
-> **`~/tasks/alsync-architecture.md`** (outside this repo)
-
-It defines:
+The parallel architecture spec at `~/tasks/alsync-architecture.md`
+defines:
 - The 64-byte `.alsync` file format header
 - Five distinct API contracts (CFAPI, AbletonOSC namespace, AbletonOSC
   observer, M4L LiveAPI JS observer, UDP 8001 prefix protocol)
@@ -65,28 +85,41 @@ It defines:
 - MVP element list and Loro doc tree mapping
 - Migration path (v0 → v0.5 → v1)
 
-A second, formal architecture + implementation spec is being produced
-in parallel by another research session. Step 6 of that flow is the
-synthesis point where the two specs reconcile and the canonical
-version emerges. **Until that happens, no production code is committed
+The parallel research session's step 6 synthesis is **complete** as
+of 2026-04-07. The canonical doc above is the authoritative reference.
+Reconciliation between the parallel input spec and the canonical doc
+landed in `~/tasks/alsync-architecture.md` § Reconciliation with
+Canonical Doc — 15/16 architectural decisions aligned in advance of
+synthesis, 1 minor naming difference (`.alsync` placeholder → `.colab`
+canonical), 1 mistake to fix during implementation (LoroTree for
+tracks instead of MovableList).
+
+**Even with synthesis complete, no production code is committed
 here** — not a parser, not a materializer, not a Loro wrapper, not a
-stub class, not a Rust crate. The directory exists so the
-implementation session can drop into it without resolving merge
-conflicts against speculative scaffolding.
+stub class, not a Rust crate. Implementation is gated on **Phase 0**
+(the ~30-minute CloudMirror + Live 12.x .als round-trip experiment
+per the canonical doc's § Implementation Roadmap). The directory
+exists so the implementation session can drop into it without
+resolving merge conflicts against speculative scaffolding.
 
 ## Status
+
+**Step 6 synthesis: COMPLETE** (2026-04-07). Authoritative reference is
+the canonical doc above.
 
 **BLOCKED on Phase 0.**
 
 Phase 0 is the **CloudMirror + Live 12.x .als round-trip experiment**
-(documented in `~/tasks/alsync-architecture.md` § Phase 0). In short:
-build the Microsoft CloudMirror sample, project a known
-XML-roundtripped `.als` through it, open in Live 12.x, save, verify
-bytes. Single test that decides whether Strategy C (CFAPI placeholder
-+ Live opens projected `.als` + saves cleanly + bytes verify) is
-viable. The 12-item risk register from the parallel research session
-ranks "Live rejecting the projected `.als`" as Risk #1 — the only
-true blocker for the entire architecture.
+(documented in the canonical doc § Implementation Roadmap and in
+`~/tasks/alsync-architecture.md` § Phase 0). In short: build the
+Microsoft CloudMirror sample, project a known XML-roundtripped `.als`
+through it, open in Live 12.x, save, verify bytes. ~30 minutes of
+focused work. Single test that decides whether **Strategy C** (CFAPI
+placeholder + Live opens projected `.als` + saves cleanly + bytes
+verify) is viable, or whether we fall back to **Strategy A**. The
+risk register from the parallel research session ranks "Live rejecting
+the projected `.als`" as Risk #1 — the only true blocker for the
+entire architecture.
 
 Until Phase 0 passes:
 - `~/colab/colab-sync/` does **not** exist (`cargo new` is gated)
