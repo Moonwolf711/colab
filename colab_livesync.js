@@ -412,8 +412,17 @@ function applyDelta(raw) {
       case 'cc': applyClipCreate(d); break;
       case 'cd': applyClipDelete(d); break;
       case 'cn': applyClipNotes(d); break;
+      case 'nf': applyNotify(d); break;
     }
   } catch(e) { post("APPLY ERR: " + e + "\n"); }
+}
+
+// Notification from the colab-engine (M4LNotifier). Best-effort console
+// surface for non-delta status — peer save events, sync warnings, etc.
+function applyNotify(d) {
+  var tag = d.tag || '[INFO]';
+  var msg = d.msg || '';
+  post(tag + ' ' + msg + '\n');
 }
 
 function applyMixer(d) {
