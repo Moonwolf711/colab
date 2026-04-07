@@ -116,7 +116,50 @@ implementation). **See below.**
 
 <!-- RESULTS_BELOW -->
 
-### Run (all tests, real installed CLI + real Max)
+### Run 2 — MIDI render added, module-scope fixture
+
+After the tier-B run we added MIDI export via `[seq]` and changed the
+`running_max` fixture from class-scope to module-scope so the whole E2E
+suite launches Max exactly once. Test count grew from 35 → 37; wall
+clock dropped from 18.93 s → 14.67 s.
+
+```
+============================= test session starts =============================
+platform win32 -- Python 3.13.5, pytest-9.0.2, pluggy-1.6.0
+collected 37 items
+
+cli_anything/max/tests/test_core.py ........... (25 unit tests) .............. PASSED
+cli_anything/max/tests/test_full_e2e.py::TestMaxControlPatch::test_ping PASSED
+cli_anything/max/tests/test_full_e2e.py::TestMaxControlPatch::test_query_sr PASSED
+cli_anything/max/tests/test_full_e2e.py::TestMaxControlPatch::test_query_patch PASSED
+cli_anything/max/tests/test_full_e2e.py::TestAudioRender::test_one_second_wav PASSED
+cli_anything/max/tests/test_full_e2e.py::TestMidiRender::test_c_major_riff_mid PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_help PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_version PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_doctor_json PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_patch_new_and_info_json PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_patch_full_workflow PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_render_midi_subprocess PASSED
+cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_patch_to_amxd_roundtrip PASSED
+
+============================= 37 passed in 14.67s =============================
+```
+
+New real artifact produced:
+
+- File: `riff.mid` (and `sub.mid` from the subprocess test)
+- Size: **40 bytes** — minimal valid SMF
+- Header: `MThd` + 6-byte length + format=0 + tracks=1 + division=960
+- Body: `MTrk` chunk with delta-timed note events from the 4-note riff
+- Inspected manually during the probe:
+  `b'MThd\x00\x00\x00\x06\x00\x00\x00\x01\x03\xc0MTrk\x00\x00\x00\x12\x82 \x90\x90\x90\x83\`\x80\x10\x00'`
+
+This proves the Max `[seq]` pipeline records the JS-scheduled notes
+and writes a conforming SMF file via `write <path>`. The same dispatcher
+pattern can be reused for any future per-object file-producing render
+(gen~, rnbo, jit.savepic, etc.).
+
+### Run 1 — Tier B baseline
 
 Command:
 
@@ -177,7 +220,7 @@ cli_anything/max/tests/test_full_e2e.py::TestCLISubprocess::test_patch_to_amxd_r
 ============================= 35 passed in 18.93s =============================
 ```
 
-### Summary
+### Summary (Run 1)
 
 - **35 / 35 passing** (100%)
 - **Unit tests** (test_core.py): 25

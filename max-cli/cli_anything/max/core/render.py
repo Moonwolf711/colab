@@ -28,6 +28,7 @@ from cli_anything.max.utils.osc_client import OSCBridge
 
 _WAV_MAGIC_RIFF = b"RIFF"
 _WAV_MAGIC_WAVE = b"WAVE"
+_MIDI_MAGIC_MTHD = b"MThd"
 
 
 def render_audio(
@@ -123,4 +124,94 @@ def render_audio(
         "duration_ms": duration_ms,
         "is_wav": True,
         "riff": True,
+    }
+
+
+def render_midi(
+    out_path: str | Path,
+    *,
+    wait_for_file_ms: int = 2500,
+    reply_timeout_s: float = 4.0,
+) -> dict[str, Any]:
+    """Render a short built-in MIDI riff to ``out_path`` via ``seq``.
+
+    The control patch's ``[seq]`` object records a 4-note C-major
+    ascending riff (C D E F) played through JS ``Task`` scheduling,
+    then writes a Standard MIDI File to the supplied path.
+
+    Args:
+        out_path: Destination ``.mid`` file path. Parent dir is
+            created. Any existing file at this path is deleted so
+            we can detect a fresh write.
+        wait_for_file_ms: How long after ``/render/midi/complete`` to
+            wait for the file to actually appear on disk. seq flushes
+            with a small delay after ``write``.
+        reply_timeout_s: How long to wait for the complete reply.
+
+    Returns:
+        ``{"path", "bytes", "is_midi": True, "mthd": True}``
+
+    Raises:
+        ``MaxNotRespondingError``, ``MaxControlError``,
+        ``FileNotFoundError``, ``ValueError`` as for ``render_audio``.
+    """
+    out = Path(out_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if out.exists():
+        out.unlink()
+
+    # Max's js object on Windows crashes on backslash paths (see the
+    # render_audio workaround). Convert to forward slashes.
+    max_path = str(out).replace("\\", "/")
+
+    with OSCBridge() as bridge:
+        bridge.send("/render/midi", max_path)
+
+        start_reply = bridge.wait_for("/render/midi/start", timeout_s=2.0)
+        if start_reply is None:
+            raise MaxNotRespondingError(
+                "no /render/midi/start within 2.0s — is the control patch loaded?"
+            )
+        if start_reply.address.endswith("/error"):
+            raise MaxControlError(f"midi start failed: {start_reply.args}")
+
+        complete_reply = bridge.wait_for(
+            "/render/midi/complete", timeout_s=reply_timeout_s
+        )
+        if complete_reply is None:
+            raise MaxNotRespondingError(
+                f"no /render/midi/complete within {reply_timeout_s:.1f}s"
+            )
+        if complete_reply.address.endswith("/error"):
+            raise MaxControlError(f"midi render failed: {complete_reply.args}")
+
+    # seq's disk flush lags the `write` message a bit. Poll for the file.
+    deadline = time.time() + wait_for_file_ms / 1000.0
+    while time.time() < deadline:
+        if out.exists() and out.stat().st_size > 0:
+            break
+        time.sleep(0.05)
+
+    if not out.exists():
+        raise FileNotFoundError(
+            f"midi render reported complete but {out} was not written"
+        )
+
+    size = out.stat().st_size
+    if size < 14:
+        # An SMF has at least a 14-byte header chunk (MThd + 6 + format + tracks + div).
+        raise ValueError(f"{out}: file too small for an SMF ({size} bytes)")
+
+    with out.open("rb") as f:
+        header = f.read(14)
+    if header[0:4] != _MIDI_MAGIC_MTHD:
+        raise ValueError(
+            f"{out}: not a valid SMF (missing MThd, header={header[:4]!r})"
+        )
+
+    return {
+        "path": str(out),
+        "bytes": size,
+        "is_midi": True,
+        "mthd": True,
     }

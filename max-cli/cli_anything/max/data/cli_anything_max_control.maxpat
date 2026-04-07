@@ -57,8 +57,19 @@
                     "text" : "js cli_anything_max_dispatcher.js @autowatch 1",
                     "patching_rect" : [40.0, 140.0, 330.0, 22.0],
                     "numinlets" : 1,
-                    "numoutlets" : 4,
-                    "outlettype" : ["", "", "", ""]
+                    "numoutlets" : 5,
+                    "outlettype" : ["", "", "", "", ""]
+                }
+            },
+            {
+                "box" : {
+                    "id" : "obj-11",
+                    "maxclass" : "newobj",
+                    "text" : "seq",
+                    "patching_rect" : [220.0, 400.0, 40.0, 22.0],
+                    "numinlets" : 1,
+                    "numoutlets" : 2,
+                    "outlettype" : ["int", "bang"]
                 }
             },
             {
@@ -133,7 +144,8 @@
             {"patchline" : {"source" : ["obj-8", 0], "destination" : ["obj-6", 0]}},
             {"patchline" : {"source" : ["obj-6", 0], "destination" : ["obj-7", 1]}},
             {"patchline" : {"source" : ["obj-6", 0], "destination" : ["obj-9", 0]}},
-            {"patchline" : {"source" : ["obj-6", 0], "destination" : ["obj-9", 1]}}
+            {"patchline" : {"source" : ["obj-6", 0], "destination" : ["obj-9", 1]}},
+            {"patchline" : {"source" : ["obj-4", 4], "destination" : ["obj-11", 0]}}
         ]
     }
 }

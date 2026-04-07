@@ -8,9 +8,10 @@
 //   1 = render gain (→ *~ right inlet)
 //   2 = sfrecord~ control (→ sfrecord~ first inlet — open / 1 / 0 messages)
 //   3 = debug (→ optional print/comment)
+//   4 = seq control (→ seq object — record / stop / write / raw MIDI ints)
 
 inlets = 1;
-outlets = 4;
+outlets = 5;
 autowatch = 1;
 
 var PATCH_NAME = "cli_anything_max_control";
@@ -49,6 +50,8 @@ function _dispatch(addr, args) {
             _do_query(args);
         } else if (addr === "/render/audio") {
             _do_render_audio(args);
+        } else if (addr === "/render/midi") {
+            _do_render_midi(args);
         } else if (addr === "/eval/js") {
             _do_eval_js(args);
         } else if (addr === "/shutdown") {
@@ -142,6 +145,73 @@ function _render_stop() {
     outlet(1, 0.0);      // mute again
     _reply("/render/complete", [g_render_path]);
     g_render_task = null;
+}
+
+// ── MIDI render via [seq] ───────────────────────────────────────────
+
+// seq accepts raw MIDI bytes as 3-int triples (status, data1, data2)
+// once it has received the `record` message. After stopping, `write
+// <path>` saves a Standard MIDI File to disk when the path ends in .mid.
+
+var g_midi_write_task = null;
+var g_midi_path = "";
+var g_midi_note_tasks = [];
+
+function _do_render_midi(args) {
+    _reply("/debug", ["midi-entered"]);
+    if (!args || args.length < 1) {
+        _reply("/render/midi/error", ["missing-args"]);
+        return;
+    }
+    var path = String(args[0]);
+    g_midi_path = path;
+
+    _reply("/render/midi/start", [path]);
+
+    // Start recording. Any MIDI bytes that arrive at seq between now
+    // and the `stop` message will be captured with live timestamps.
+    outlet(4, "record");
+    _reply("/debug", ["midi-recording"]);
+
+    // Schedule a C major ascending riff — note_on/note_off pairs for
+    // four pitches spread over ~700 ms so seq captures real deltas.
+    // Status byte 144 = note_on, channel 1. Note_off is sent as a
+    // note_on with velocity 0, which every SMF parser understands.
+    var self = this;
+    var notes = [
+        [ 0,    60],
+        [ 150,  62],
+        [ 300,  64],
+        [ 450,  65]
+    ];
+    g_midi_note_tasks = [];
+    for (var i = 0; i < notes.length; i++) {
+        (function (t_ms, pitch) {
+            var t_on = new Task(function () {
+                outlet(4, 144, pitch, 100);
+            }, self);
+            t_on.schedule(t_ms);
+            g_midi_note_tasks.push(t_on);
+            var t_off = new Task(function () {
+                outlet(4, 144, pitch, 0);
+            }, self);
+            t_off.schedule(t_ms + 100);
+            g_midi_note_tasks.push(t_off);
+        })(notes[i][0], notes[i][1]);
+    }
+
+    // After 700 ms, stop recording and write the .mid file.
+    g_midi_write_task = new Task(_midi_finish, this);
+    g_midi_write_task.schedule(700);
+}
+
+function _midi_finish() {
+    outlet(4, "stop");
+    // seq's write message accepts an explicit filename in Max 9.
+    outlet(4, "write", g_midi_path);
+    _reply("/render/midi/complete", [g_midi_path]);
+    g_midi_write_task = null;
+    g_midi_note_tasks = [];
 }
 
 function _do_eval_js(args) {

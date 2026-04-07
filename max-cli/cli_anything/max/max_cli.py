@@ -396,6 +396,22 @@ def render_audio(out_path: str, duration: float) -> None:
     _emit(result)
 
 
+@render.command("midi")
+@click.argument("out_path", type=click.Path(dir_okay=False))
+def render_midi(out_path: str) -> None:
+    """Render the control patch's built-in C-major riff to a .mid (SMF)."""
+    try:
+        result = render_mod.render_midi(out_path)
+    except (
+        control_mod.MaxNotRespondingError,
+        control_mod.MaxControlError,
+        FileNotFoundError,
+        ValueError,
+    ) as e:
+        _die(str(e))
+    _emit(result)
+
+
 # ── session group (minimal) ──────────────────────────────────────────
 
 

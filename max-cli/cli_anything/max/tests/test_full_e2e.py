@@ -59,7 +59,7 @@ CLI_BASE = _resolve_cli("cli-anything-max")
 # ── Running-Max fixtures ─────────────────────────────────────────────
 
 
-@pytest.fixture(scope="class")
+@pytest.fixture(scope="module")
 def running_max():
     """Launch MaxRT_nocef.exe with the shipped control patch.
 
@@ -139,6 +139,42 @@ class TestAudioRender:
             hdr = f.read(12)
         assert hdr[0:4] == b"RIFF"
         assert hdr[8:12] == b"WAVE"
+
+
+@pytest.mark.e2e
+class TestMidiRender:
+    def test_c_major_riff_mid(self, running_max, tmp_path: Path):
+        out = tmp_path / "riff.mid"
+        result = render_mod.render_midi(out)
+
+        assert result["is_midi"] is True
+        assert result["mthd"] is True
+        size = result["bytes"]
+        # A minimal SMF with a few notes is on the order of 30-200 bytes.
+        # We only require "plausibly an SMF with content" — strict event
+        # counts depend on real-time scheduler jitter inside Max and are
+        # not a useful stability target.
+        assert 30 <= size <= 5000, f"unexpected mid size: {size}"
+
+        print(f"\n  MID: {result['path']} ({size:,} bytes)")
+
+        with out.open("rb") as f:
+            hdr = f.read(14)
+        # MThd + 6-byte length + format + tracks + division
+        assert hdr[0:4] == b"MThd"
+        assert hdr[4:8] == b"\x00\x00\x00\x06"
+        fmt = int.from_bytes(hdr[8:10], "big")
+        tracks = int.from_bytes(hdr[10:12], "big")
+        division = int.from_bytes(hdr[12:14], "big")
+        assert fmt in (0, 1, 2)
+        assert tracks >= 1
+        assert division > 0
+        print(f"    SMF format={fmt} tracks={tracks} division={division}")
+
+        # Also verify the MTrk chunk exists directly after the header.
+        with out.open("rb") as f:
+            all_bytes = f.read()
+        assert b"MTrk" in all_bytes, "no MTrk chunk in file"
 
 
 # ── Subprocess tests (no running Max required) ──────────────────────
@@ -227,6 +263,24 @@ class TestCLISubprocess:
         assert info["lines"] == 1
         ids = [o["id"] for o in info["objects"]]
         assert set(ids) == {"osc", "out"}
+
+    @pytest.mark.e2e
+    def test_render_midi_subprocess(self, running_max, tmp_path: Path):
+        """Run `cli-anything-max render midi` against the real installed binary.
+
+        Requires the ``running_max`` fixture because this command actually
+        drives the control patch.
+        """
+        out = tmp_path / "sub.mid"
+        result = self._run(["--json", "render", "midi", str(out)])
+        assert result.returncode == 0, result.stderr
+        data = json.loads(result.stdout)
+        assert data["is_midi"] is True
+        assert data["mthd"] is True
+        assert out.exists()
+        with out.open("rb") as f:
+            assert f.read(4) == b"MThd"
+        print(f"\n  subprocess MID: {out} ({data['bytes']} bytes)")
 
     def test_patch_to_amxd_roundtrip(self, tmp_path: Path):
         patch_path = tmp_path / "d.maxpat"

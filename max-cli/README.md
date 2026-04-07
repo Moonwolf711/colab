@@ -17,9 +17,10 @@ Tier **B (Core)** per the plan in `~/tasks/cli-anything-max-plan.md`:
 - [x] Launch layer: `Max.exe`, `MaxRT.exe`, `MaxRT_nocef.exe` subprocess control
 - [x] Control layer: OSC/UDP to an authored control patch + dispatcher JS
 - [x] Render layer: offline audio render to `.wav` via `sfrecord~`
+- [x] Render layer: MIDI export to `.mid` (SMF) via `[seq]`
 - [x] Click CLI with REPL default mode and `--json` output
 - [x] Unit + E2E tests (E2E launches real Max)
-- [ ] Image / MIDI / gen~ / rnbo render (tier C)
+- [ ] Image / gen~ / rnbo render (tier C)
 - [ ] Full undo/redo in session (tier C)
 
 ## Prerequisites
