@@ -30,6 +30,7 @@ function AlsGit(options) {
   this._onPush = null;
   this._onError = null;
   this._onDiff = null;
+  this._onRawSave = null;   // fires with (bufferOfAlsBytes, alsPath) — before diff parse
   this._commitQueue = [];
   this._committing = false;
 }
@@ -105,6 +106,13 @@ AlsGit.prototype._processSave = function() {
     if (newBuffer.length === 0) return; // incomplete write
   } catch (e) {
     return; // file locked during write
+  }
+
+  // Fire the raw-save hook BEFORE the (expensive) diff parse, so
+  // AlsReplicator can start shipping bytes over the wire immediately
+  // and in parallel with the git commit pipeline.
+  if (this._onRawSave) {
+    try { this._onRawSave(newBuffer, this._alsPath); } catch (e) {}
   }
 
   var newTree;
@@ -430,6 +438,7 @@ AlsGit.prototype.onCommit = function(callback) { this._onCommit = callback; };
 AlsGit.prototype.onPush = function(callback) { this._onPush = callback; };
 AlsGit.prototype.onError = function(callback) { this._onError = callback; };
 AlsGit.prototype.onDiff = function(callback) { this._onDiff = callback; };
+AlsGit.prototype.onRawSave = function(callback) { this._onRawSave = callback; };
 
 AlsGit.prototype._emitError = function(msg) {
   if (this._onError) this._onError(msg);

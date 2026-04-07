@@ -28,6 +28,7 @@ exports.PKT = {
   ASSET_TRANSFER: 0x62,
   ASSET_MISSING: 0x63,
   PLUGIN_AUDIT: 0x64,
+  ALS_SET: 0x65,       // full .als file bytes (peer B replicates on save)
 
   // LAN Transport control packets
   ACK: 0xA0,

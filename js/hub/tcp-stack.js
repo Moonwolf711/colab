@@ -613,6 +613,9 @@ TcpStack.prototype._dispatchFrame = function(channel, payload) {
       case C.PKT.PLUGIN_AUDIT:
         this._emit('plugin_audit', payload.slice(5));
         break;
+      case C.PKT.ALS_SET:
+        this._emit('als_set', payload.slice(5));
+        break;
       default:
         this._emit('data_raw', payload);
     }
