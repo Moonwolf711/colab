@@ -29,6 +29,7 @@ var pcm = require('./pcm-stream');
 var AlsDiffer = require('./als-differ');
 var AlsGit = require('./als-git');
 var AlsReplicator = require('./als-replicator');
+var M4LNotifier = require('./m4l-notifier');
 var AssetResolver = require('./asset-resolver');
 var SyncController = require('./sync-controller');
 var C = require('../shared/constants');
@@ -96,6 +97,15 @@ function CoLabEngine(options) {
     tcp: this.tcp,
     alsPath: null, // set in start() once _alsFullPath is resolved
     maxBytes: options.alsMaxBytes || (256 * 1024 * 1024)
+  });
+
+  // M4LNotifier — fire-and-forget JSON-over-UDP to the CoLaB Max device
+  // on UDP 8001 for non-delta status messages (peer save notifications,
+  // sync warnings, etc).
+  this.notifier = new M4LNotifier({
+    host: options.m4lHost || '127.0.0.1',
+    port: options.m4lPort || 8001,
+    uid: options.uid || ('colab-engine-' + process.pid)
   });
 
   this.assets = new AssetResolver(null);
@@ -260,6 +270,9 @@ CoLabEngine.prototype.stop = function() {
 
   this.udp.destroy();
   this.tcp.destroy();
+  if (this.notifier) {
+    try { this.notifier.close(); } catch(e) {}
+  }
 
   this._emit('stopped');
 };
@@ -364,11 +377,31 @@ CoLabEngine.prototype._wireSubsystems = function() {
   });
   this.alsReplicator.on('sent', function(info) {
     self._emit('als_replicated', { direction: 'out', bytes: info.bytes, sha: info.sha, name: info.name });
+    if (self.notifier) {
+      var sizeStr = M4LNotifier.formatBytes(info.bytes);
+      self.notifier.info(
+        'shipped ' + (info.name || '?') + ' to peer (' + sizeStr + ')',
+        { name: info.name, bytes: info.bytes, sha: info.sha, direction: 'out' }
+      );
+    }
   });
   this.alsReplicator.on('remote_save', function(info) {
     self._emit('als_replicated', { direction: 'in', bytes: info.bytes, sha: info.sha256, name: info.name, path: info.path });
-    // Surface to M4L / terminal via existing state channel, so a
-    // future UI popup can pick it up ("Peer saved — reopen to see").
+
+    // Surface to the M4L console via the dedicated notifier channel
+    // (UDP 8001). This is the user-visible "your partner just saved"
+    // signal — the colab_livesync.js dispatcher renders it as
+    //   [INFO] peer saved: sync project.als (4.2 MB)
+    if (self.notifier) {
+      var sizeStr = M4LNotifier.formatBytes(info.bytes);
+      self.notifier.info(
+        'peer saved: ' + (info.name || '?') + ' (' + sizeStr + ')',
+        { name: info.name, bytes: info.bytes, sha: info.sha256, path: info.path }
+      );
+    }
+
+    // ALSO surface via the TCP state channel for any other listener
+    // (dashboards, web-bridge, etc.) that wants the structured form.
     if (self._connected) {
       self.tcp.sendMessage(C.PKT.STATE_UPDATE, {
         type: 'als_replicated_ack',
