@@ -519,6 +519,83 @@ AbletonClient.prototype.createClipAutomation = function(trackIndex, clipIndex, p
 };
 
 // ---------------------------------------------------------------------------
+// Warp markers (Live 11+)  ── handlers/clips.py:874-986
+// ---------------------------------------------------------------------------
+
+AbletonClient.prototype.getClipWarpMarkers = function(trackIndex, clipIndex) {
+  return this.send('get_warp_markers', { track_index: trackIndex, clip_index: clipIndex });
+};
+
+AbletonClient.prototype.addClipWarpMarker = function(trackIndex, clipIndex, beatTime, sampleTime) {
+  var params = { track_index: trackIndex, clip_index: clipIndex, beat_time: beatTime };
+  if (sampleTime !== undefined && sampleTime !== null) params.sample_time = sampleTime;
+  return this.send('add_warp_marker', params);
+};
+
+AbletonClient.prototype.removeClipWarpMarker = function(trackIndex, clipIndex, beatTime) {
+  return this.send('remove_warp_marker', { track_index: trackIndex, clip_index: clipIndex, beat_time: beatTime });
+};
+
+AbletonClient.prototype.moveClipWarpMarker = function(trackIndex, clipIndex, beatTime, beatTimeDistance) {
+  return this.send('move_warp_marker', {
+    track_index: trackIndex, clip_index: clipIndex,
+    beat_time: beatTime, beat_time_distance: beatTimeDistance
+  });
+};
+
+/**
+ * Convenience: replace ALL warp markers on a clip with the supplied list.
+ * Removes existing markers and adds the new ones in two phases. Slow but
+ * bounded — warp marker counts per clip are typically <20.
+ *
+ * `markers` is an array of objects with `beat_time` and (optional) `sample_time`.
+ * Returns a promise that resolves when both phases complete.
+ */
+AbletonClient.prototype.setClipWarpMarkers = function(trackIndex, clipIndex, markers) {
+  var self = this;
+  return this.getClipWarpMarkers(trackIndex, clipIndex).then(function(current) {
+    var existing = (current && current.warp_markers) || [];
+    // Remove existing markers (oldest beat_time first to keep API consistent).
+    var removeChain = Promise.resolve();
+    for (var i = 0; i < existing.length; i++) {
+      (function(beat) {
+        removeChain = removeChain.then(function() {
+          return self.removeClipWarpMarker(trackIndex, clipIndex, beat).catch(function() {});
+        });
+      })(existing[i].beat_time);
+    }
+    return removeChain.then(function() {
+      var addChain = Promise.resolve();
+      for (var j = 0; j < markers.length; j++) {
+        (function(m) {
+          addChain = addChain.then(function() {
+            return self.addClipWarpMarker(trackIndex, clipIndex, m.beat_time, m.sample_time).catch(function() {});
+          });
+        })(markers[j]);
+      }
+      return addChain;
+    });
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Extended notes (Live 11+)  ── handlers/midi.py:44-202
+// ---------------------------------------------------------------------------
+
+AbletonClient.prototype.getClipNotesExtended = function(trackIndex, clipIndex) {
+  return this.send('get_notes_extended', {
+    track_index: trackIndex, clip_index: clipIndex,
+    start_time: 0, time_span: 0
+  });
+};
+
+AbletonClient.prototype.addNotesExtendedToClip = function(trackIndex, clipIndex, notes) {
+  return this.send('add_notes_extended', {
+    track_index: trackIndex, clip_index: clipIndex, notes: notes
+  });
+};
+
+// ---------------------------------------------------------------------------
 // Browser / Instrument loading
 // ---------------------------------------------------------------------------
 

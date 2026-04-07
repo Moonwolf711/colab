@@ -600,6 +600,11 @@ ParamSync.prototype._pollDeep = function() {
   if (this._layerEnabled.automation) {
     this._pollAutomationAllTracksTick();
   }
+
+  // Warp markers — slow rotation, 1 track per tick with a 30s per-track
+  // throttle. Warp marker edits are infrequent so we can afford a long
+  // visit interval. See _pollWarpMarkersTick for the protocol notes.
+  this._pollWarpMarkersTick();
 };
 
 // ---------------------------------------------------------------------------
@@ -649,6 +654,96 @@ ParamSync.prototype._pollAutomationAllTracksTick = function() {
   this._lastAutoPoll[trackIdx] = now;
   this._pollClipAutomationBroad(trackIdx, clipIdx);
 };
+
+// ---------------------------------------------------------------------------
+// Warp markers — Phase 2B of colab-als-sync-plan.md
+// ---------------------------------------------------------------------------
+//
+// Warp markers anchor sample positions to beat positions for time-stretched
+// audio clips. Each clip has a small list of {beat_time, sample_time}
+// markers that the user occasionally edits. We poll one track per tick at
+// 4Hz with a 30 s per-track throttle, so a 30-track set sweeps every 30 s.
+//
+// Wire format (sendSyncDelta('warp_markers', ...)):
+//   { track, clip, markers: [{beat_time, sample_time}, ...], hash }
+//
+// Apply: setClipWarpMarkers() removes existing markers and adds the new
+// list (replace-all strategy). Slow but bounded — a typical clip has <20
+// warp markers.
+
+var WARP_MIN_INTERVAL_MS = 30000;
+
+ParamSync.prototype._pollWarpMarkersTick = function() {
+  if (this._trackCount === 0) return;
+  if (this._warpScanIndex === undefined) this._warpScanIndex = 0;
+  if (!this._lastWarpPoll) this._lastWarpPoll = {};
+  if (!this._warpSnapshot) this._warpSnapshot = {};
+
+  var trackIdx = this._warpScanIndex % this._trackCount;
+  this._warpScanIndex = (this._warpScanIndex + 1) % this._trackCount;
+
+  var now = Date.now();
+  if (this._lastWarpPoll[trackIdx] && (now - this._lastWarpPoll[trackIdx]) < WARP_MIN_INTERVAL_MS) {
+    return;
+  }
+
+  // Find a populated audio clip on this track. (Warp markers are
+  // audio-clip-only; MIDI clips will simply return an empty list.)
+  var clipList = this._clipListSnapshot[trackIdx] || [];
+  for (var c = 0; c < clipList.length; c++) {
+    if (clipList[c] && clipList[c].has_clip) {
+      // ECHO GUARD: skip locked clips
+      if (this._isLocked(this._clipSlotKey(trackIdx, c))) continue;
+      this._lastWarpPoll[trackIdx] = now;
+      this._pollClipWarpMarkers(trackIdx, c);
+      return;
+    }
+  }
+};
+
+ParamSync.prototype._pollClipWarpMarkers = function(trackIdx, clipIdx) {
+  var self = this;
+  this._writeClient.getClipWarpMarkers(trackIdx, clipIdx).then(function(result) {
+    if (!result) return;
+    var markers = result.warp_markers || [];
+    if (markers.length === 0) return; // MIDI clip, no warping, etc.
+
+    var now = Date.now();
+    var key = trackIdx + ':' + clipIdx;
+    var hash = self._hashWarpMarkers(markers);
+
+    if (self._warpSnapshot[key] && self._warpSnapshot[key] !== hash) {
+      var suppressKey = 'warp:' + key;
+      if (!self._isSuppressed(suppressKey, now)) {
+        self._recentLocalChange[suppressKey] = now;
+        self._engine.sendSyncDelta('warp_markers', {
+          track: trackIdx, clip: clipIdx,
+          markers: markers,
+          warp_mode: result.warp_mode || null,
+          hash: hash
+        });
+        self._emit('local_change', {
+          track: trackIdx, param: 'warp_markers',
+          oldValue: null, newValue: markers.length + ' markers', timestamp: now
+        });
+      }
+    }
+
+    self._warpSnapshot[key] = hash;
+  }).catch(function() {});
+};
+
+ParamSync.prototype._hashWarpMarkers = function(markers) {
+  if (!markers || markers.length === 0) return '';
+  var parts = [];
+  for (var i = 0; i < markers.length; i++) {
+    var m = markers[i] || {};
+    parts.push((m.beat_time || 0).toFixed(6) + ':' + (m.sample_time || 0).toFixed(2));
+  }
+  return parts.join('|');
+};
+
+// ---------------------------------------------------------------------------
 
 /**
  * Wider version of _pollClipAutomation — polls up to
@@ -832,11 +927,15 @@ ParamSync.prototype._pollClipProperties = function(trackIdx, clipIdx) {
 
 ParamSync.prototype._pollClipNotes = function(trackIdx, clipIdx) {
   var self = this;
-  // Use _writeClient to avoid saturating _client's poll queue
-  // Use _writeClient for note reads — _clipClient is saturated by clip watch
-  this._writeClient.send('get_clip_notes', {
+  // Phase 2C upgrade: prefer get_notes_extended (Live 11+) so the wire
+  // payload includes probability / mute / velocity_deviation /
+  // release_velocity when the clip has them. The Python helper falls
+  // back to legacy get_notes on older Live versions, so this is
+  // backwards-compatible — older clips just emit the basic 4-field
+  // shape and the receive side detects the absence of extended fields.
+  this._writeClient.send('get_notes_extended', {
     track_index: trackIdx, clip_index: clipIdx,
-    start_time: 0, time_span: 0, start_pitch: 0, pitch_span: 128
+    start_time: 0, time_span: 0
   }).then(function(result) {
     var notes = Array.isArray(result) ? result : (result && result.notes ? result.notes : []);
     var now = Date.now();
@@ -848,7 +947,8 @@ ParamSync.prototype._pollClipNotes = function(trackIdx, clipIdx) {
       if (!self._isSuppressed(suppressKey, now)) {
         self._recentLocalChange[suppressKey] = now;
         self._engine.sendSyncDelta('clip_notes', {
-          track: trackIdx, clip: clipIdx, notes: notes, hash: hash
+          track: trackIdx, clip: clipIdx, notes: notes, hash: hash,
+          extended: !!(result && result.extended)
         });
         self._emit('local_change', {
           track: trackIdx, param: 'clip_notes',
@@ -968,6 +1068,7 @@ ParamSync.prototype._onPeerState = function(data) {
     case 'transport':   this._applyRemoteTransportPayload(payload, now); break;
     case 'device_param': this._applyRemoteDeviceParam(payload, now); break;
     case 'clip_notes':  this._applyRemoteClipNotes(payload, now); break;
+    case 'warp_markers': this._applyRemoteWarpMarkers(payload, now); break;
     case 'clip_create_full': this._applyRemoteClipCreateFull(payload, now); break;
     case 'clip_op':     this._applyRemoteClipOp(payload, now); break;
     case 'device_op':   this._applyRemoteDeviceOp(payload, now); break;
@@ -1069,30 +1170,81 @@ ParamSync.prototype._applyRemoteDeviceParam = function(payload, now) {
 
 ParamSync.prototype._applyRemoteClipNotes = function(payload, now) {
   var t = payload.track, c = payload.clip;
-  console.log('[param-sync] APPLY CLIP NOTES: T' + t + ':C' + c + ' (' + (payload.notes ? payload.notes.length : 0) + ' notes)');
+  var notes = payload.notes || [];
+  console.log('[param-sync] APPLY CLIP NOTES: T' + t + ':C' + c + ' (' + notes.length + ' notes)');
 
   var suppressKey = 'notes:' + t + ':' + c;
   this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
   this._noteSnapshot[t + ':' + c] = payload.hash;
-  this._noteCache[t + ':' + c] = payload.notes;
+  this._noteCache[t + ':' + c] = notes;
 
   this._applyingCount++;
   var self = this;
 
-  // Clear existing notes, then add new ones
-  this._writeClient.clearClipNotes(t, c).then(function() {
-    if (payload.notes && payload.notes.length > 0) {
-      return self._writeClient.addNotesToClip(t, c, payload.notes);
+  // Phase 2C: detect any extended note property in the payload and use
+  // add_notes_extended (Live 11+) when present, so probability / mute /
+  // velocity_deviation / release_velocity round-trip across the wire.
+  var hasExtended = false;
+  for (var i = 0; i < notes.length; i++) {
+    var n = notes[i] || {};
+    if (n.probability !== undefined ||
+        n.velocity_deviation !== undefined ||
+        n.release_velocity !== undefined ||
+        n.mute === true) {
+      hasExtended = true;
+      break;
     }
+  }
+
+  // Clear existing notes, then add new ones via the appropriate API.
+  this._writeClient.clearClipNotes(t, c).then(function() {
+    if (notes.length === 0) return;
+    if (hasExtended) {
+      return self._writeClient.addNotesExtendedToClip(t, c, notes);
+    }
+    return self._writeClient.addNotesToClip(t, c, notes);
   }).then(function() {
     self._applyingCount = Math.max(0, self._applyingCount - 1);
-    self._emit('remote_applied', { track: t, param: 'clip_notes', value: (payload.notes || []).length + ' notes' });
+    self._emit('remote_applied', {
+      track: t, param: 'clip_notes',
+      value: notes.length + ' notes' + (hasExtended ? ' (extended)' : '')
+    });
   }).catch(function(err) {
     self._applyingCount = Math.max(0, self._applyingCount - 1);
     self._emit('remote_apply_error', { track: t, param: 'clip_notes', error: err.message || String(err) });
   });
 
   this._emit('remote_change', { track: t, param: 'clip_notes', value: payload, timestamp: now });
+};
+
+// --- Warp markers apply ---
+
+ParamSync.prototype._applyRemoteWarpMarkers = function(payload, now) {
+  var t = payload.track, c = payload.clip;
+  var markers = payload.markers || [];
+  console.log('[param-sync] APPLY WARP MARKERS: T' + t + ':C' + c + ' (' + markers.length + ' markers)');
+
+  var suppressKey = 'warp:' + t + ':' + c;
+  this._recentRemoteApply[suppressKey] = now + ECHO_SUPPRESS_MS;
+  if (!this._warpSnapshot) this._warpSnapshot = {};
+  this._warpSnapshot[t + ':' + c] = payload.hash;
+
+  // ECHO GUARD: lock the clip slot so the next poll round doesn't
+  // re-emit the markers we just applied.
+  this._lockSlot(this._clipSlotKey(t, c));
+
+  this._applyingCount++;
+  var self = this;
+
+  this._writeClient.setClipWarpMarkers(t, c, markers).then(function() {
+    self._applyingCount = Math.max(0, self._applyingCount - 1);
+    self._emit('remote_applied', { track: t, param: 'warp_markers', value: markers.length + ' markers' });
+  }).catch(function(err) {
+    self._applyingCount = Math.max(0, self._applyingCount - 1);
+    self._emit('remote_apply_error', { track: t, param: 'warp_markers', error: err.message || String(err) });
+  });
+
+  this._emit('remote_change', { track: t, param: 'warp_markers', value: payload, timestamp: now });
 };
 
 // --- Clip operation apply (create/delete/fire/stop) ---
