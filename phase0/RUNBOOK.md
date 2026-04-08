@@ -153,6 +153,90 @@ If Tier 2 also fails, we have a structural problem with XML round-trips against 
 
 ---
 
+## Strategy D survival test (orthogonal — not a tier)
+
+**Status: optional but cheap (≤ 2 minutes per fixture). Run alongside Tier 1 or Tier 2 if curious.**
+
+### What Strategy D is
+
+The architecture synthesis defines four candidate strategies for combining a CRDT envelope with a Live-readable `.als`:
+
+| Strategy | What it does | Verdict |
+|---|---|---|
+| **A** | Sidecar `.colab` file lives next to the `.als`. Two files, two lifecycles. | Mac/Linux fallback; ugly UX but always works. |
+| **B** | Custom 64-byte header prepended to the gzip stream in the same `.als` file. | Dead per RFC 1952 — gzip magic must be at offset 0; Ableton's loader is strict. |
+| **C** | CFAPI placeholder projects the `.als` bytes on-demand from the CRDT state. | Recommended. The whole point of Tiers 0-3 above. |
+| **D** | Hide CRDT metadata inside the `.als` itself by injecting a custom XML element (e.g. `<COLABSentinel>`) under `<LiveSet>`. | **Predicted dead** — Live's in-memory model doesn't know about unknown elements, so it strips them on save. Universal pattern across reverse-engineered DAWs. |
+
+Strategy D is the only one of the four whose verdict is a **prediction, not a verification**. This 2-minute test cheaply falsifies the prediction. If it survives Live's save, Strategy D becomes a viable backstop and the architecture has a second option without needing CFAPI at all.
+
+### What this test does NOT answer
+
+This test is orthogonal to the gzip/serializer/CFAPI tier ladder. Tiers 0-3 ask "can our materializer produce a Live-acceptable `.als` byte stream?" — Strategy D asks "does Live preserve unknown XML across save?" Different question, complementary signal. **Run it after Tier 1 or Tier 2 has already proven the materializer works**, otherwise a failure could be the materializer rather than Live's element-stripping.
+
+### Generate the sentinel fixtures
+
+```bash
+cd ~/colab
+python phase0/make_sentinels.py "C:/Users/Owner/OneDrive/Desktop/test 1 Project/test 1.als"
+```
+
+Expected output:
+
+```
+Strategy D sentinel generator
+  input:    C:\Users\Owner\OneDrive\Desktop\test 1 Project\test 1.als (499080 bytes)
+  username sentinel:
+    track:   GroupTrack Id=...
+    edit:    'PRE MASTER' -> 'PRE MASTER [COLAB-PHASE0-USERNAME]'
+    written: /tmp/colab-phase0/sentinels/test 1-sentinel-username.als (... bytes)
+  custom-element sentinel:
+    tag:     <COLABSentinel Value='phase0-strategy-d-test'/>
+    written: /tmp/colab-phase0/sentinels/test 1-sentinel-custom.als (... bytes)
+STRATEGY D GENERATOR RESULT: PASS  fixtures ready for manual Live test
+```
+
+The generator emits two fixtures, each isolating a different question:
+
+| Fixture | Tests | Expected outcome |
+|---|---|---|
+| `test 1-sentinel-username.als` | Does Live preserve edits to *known schema fields* (UserName)? | **Survives.** If it doesn't, even safe field edits are dangerous and the differ design changes. |
+| `test 1-sentinel-custom.als` | Does Live preserve *unknown* XML elements (Strategy D)? | **Stripped** (prediction). If it survives → SURPRISE, Strategy D viable. |
+
+### The manual loop (per fixture, ≤ 1 minute each)
+
+1. Open `/tmp/colab-phase0/sentinels/test 1-sentinel-username.als` in Live 12.x.
+   - Look at the leftmost track. The name should contain `[COLAB-PHASE0-USERNAME]`.
+   - **If Live errors on load or shows no sentinel: stop here, paste me the symptom.**
+2. `File → Save` (overwriting the same file).
+3. Run the verifier:
+   ```bash
+   python phase0/make_sentinels.py --verify username "/tmp/colab-phase0/sentinels/test 1-sentinel-username.als"
+   ```
+4. Repeat for the custom-element fixture:
+   ```
+   /tmp/colab-phase0/sentinels/test 1-sentinel-custom.als
+   ```
+   then:
+   ```bash
+   python phase0/make_sentinels.py --verify custom "/tmp/colab-phase0/sentinels/test 1-sentinel-custom.als"
+   ```
+
+### Pass/fail criteria
+
+| Outcome | What the verifier prints | What it means |
+|---|---|---|
+| Username sentinel survives | `STRATEGY D / USERNAME RESULT: PASS  sentinel '[COLAB-PHASE0-USERNAME]' survived Live save` | Schema-field edits are safe. Expected and required for the differ design. |
+| Username sentinel missing | `STRATEGY D / USERNAME RESULT: FAIL  sentinel … stripped or moved` | Even safe edits get touched. Investigate before any further work. |
+| Custom element stripped | `STRATEGY D / CUSTOM RESULT: STRIPPED  <COLABSentinel> removed by Live (as predicted)` | **Strategy D dead, prediction confirmed. Strategy C is the only path.** Not a script failure — this is the predicted outcome. |
+| Custom element survives | `STRATEGY D / CUSTOM RESULT: SURVIVED  <COLABSentinel> preserved across Live save` | **Surprise.** Strategy D is viable. Tell me immediately so the canonical doc gets a new option in the strategy table. |
+
+### Why this is worth 2 minutes
+
+The architecture currently picks Strategy C and treats Strategy D as "near-certain dead based on first principles." Spending 2 minutes to convert "near-certain" to "verified" is cheap insurance. If the prediction holds (most likely), the architecture doc becomes more authoritative. If the prediction is wrong, the architecture has a second viable option that's strictly simpler than CFAPI — and that's worth knowing before Phase 1 starts.
+
+---
+
 ## Tier 3 — CloudMirror CFAPI projection (full Strategy C)
 
 **Goal**: the actual unblock-gate test. Build the [Microsoft CloudMirror sample](https://github.com/microsoft/Windows-classic-samples/tree/master/Samples/CloudMirror), register a CFAPI sync root, project a Tier 1/2-validated `.als` through CFAPI, open in Live, save, verify bytes.
@@ -174,17 +258,28 @@ If those commands fail, you need to install the C++/WinRT workload:
 5. Individual components tab → search for and check **C++/WinRT**
 6. Click **Modify** to install (~5 GB)
 
+A sparse clone of the CloudMirror sample is already on this machine at:
+
+```
+~/colab/phase0_external/CloudMirror/Samples/CloudMirror/
+```
+
+That directory is **gitignored** (the clone is Microsoft's code with its own git history; we don't vendor it into the colab repo). If it's missing, recreate it with:
+
+```powershell
+cd ~/colab
+mkdir phase0_external
+cd phase0_external
+git clone --depth 1 --filter=blob:none --sparse https://github.com/microsoft/Windows-classic-samples.git CloudMirror
+cd CloudMirror
+git sparse-checkout set Samples/CloudMirror
+```
+
 Once the prereqs are present:
 
 ```powershell
-# Clone the Windows-classic-samples repo (only the CloudMirror sub-tree)
-cd ~/colab/phase0
-git clone --depth 1 --filter=blob:none --sparse https://github.com/microsoft/Windows-classic-samples.git
-cd Windows-classic-samples
-git sparse-checkout set Samples/CloudMirror
-cd Samples/CloudMirror
-
 # Build via MSBuild (no IDE needed)
+cd ~/colab/phase0_external/CloudMirror/Samples/CloudMirror
 msbuild CloudMirror.vcxproj /p:Configuration=Release /p:Platform=x64
 ```
 

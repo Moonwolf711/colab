@@ -1,6 +1,8 @@
 node_modules/
 __pycache__/
 .claude-flow/
+/phase0_external/
+/phase0/sentinels/
 *.jpg
 *.png
 *.log
