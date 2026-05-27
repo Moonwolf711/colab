@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Claude Bar</title>
+<style>
+:root {
+  --bg: #0b0d12;
+  --panel: #11141b;
+  --line: #1c2230;
+  --text: #d6d9df;
+  --muted: #6b7280;
+  --accent: #5b8cff;
+  --user: #ffd76b;
+  --sys: #b97cff;
+  --err: #ff5c5c;
+  --ok: #4ec47e;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
+  font: 11px/1.35 'JetBrains Mono', Consolas, monospace; overflow: hidden; }
+.wrap { display: flex; flex-direction: column; height: 100%; }
+.head { flex: 0 0 16px; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--line);
+  display: flex; justify-content: space-between; align-items: center; font-size: 10px; line-height: 16px; }
+.title { color: var(--accent); letter-spacing: 0.08em; }
+.status { color: var(--muted); }
+.status.ok { color: var(--ok); }
+.status.err { color: var(--err); }
+.mode { color: var(--sys); cursor: pointer; padding: 0 4px; }
+.log { flex: 1; overflow-y: auto; padding: 4px 8px; }
+.log::-webkit-scrollbar { width: 5px; }
+.log::-webkit-scrollbar-thumb { background: #2a3040; border-radius: 3px; }
+.msg { margin: 0 0 2px; white-space: pre-wrap; word-wrap: break-word; }
+.msg .ts { color: var(--muted); margin-right: 5px; font-size: 9px; }
+.msg .lbl { display: inline-block; min-width: 44px; margin-right: 4px; font-weight: 600; font-size: 9px; }
+.msg.user .lbl { color: var(--user); }
+.msg.claude .lbl { color: var(--accent); }
+.msg.sys .lbl { color: var(--sys); }
+.msg.err .lbl { color: var(--err); }
+.msg.step { color: var(--muted); font-style: italic; opacity: 0.75; }
+.msg.step .lbl { color: var(--muted); }
+.input-wrap { flex: 0 0 auto; position: relative; padding: 3px 8px; border-top: 1px solid var(--line);
+  background: var(--panel); }
+.input { display: flex; align-items: center; gap: 6px; }
+.input .prompt { color: var(--accent); }
+#ta { flex: 1; background: transparent; border: none; outline: none; color: var(--text);
+  font: inherit; resize: none; padding: 3px 0; max-height: 60px; line-height: 1.3; }
+.menu { position: absolute; bottom: 100%; left: 18px; right: 8px; max-height: 110px; overflow-y: auto;
+  background: #161a23; border: 1px solid #2a3040; border-radius: 3px; display: none; z-index: 10;
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.4); }
+.menu.open { display: block; }
+.menu .item { padding: 3px 8px; cursor: pointer; display: flex; justify-content: space-between; font-size: 10px; }
+.menu .item:hover, .menu .item.sel { background: #232a3a; }
+.menu .item .cmd { color: var(--accent); }
+.menu .item .desc { color: var(--muted); margin-left: 8px; }
+.ctxmenu { position: fixed; background: #161a23; border: 1px solid #2a3040; border-radius: 4px;
+  min-width: 130px; z-index: 100; display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
+.ctxmenu.open { display: block; }
+.ctxmenu .item { padding: 5px 12px; cursor: pointer; font-size: 11px; color: var(--text); }
+.ctxmenu .item:hover { background: #2a3040; }
+.ctxmenu .item.disabled { color: var(--muted); cursor: default; }
+.ctxmenu .item.disabled:hover { background: transparent; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <span><span class="title">CLAUDE</span> <span class="mode" id="mode" title="click to toggle fast/full">[fast]</span></span>
+    <span id="status" class="status">connecting…</span>
+  </div>
+  <div id="log" class="log"></div>
+  <div class="input-wrap">
+    <div id="menu" class="menu"></div>
+    <div class="input">
+      <span class="prompt">&gt;</span>
+      <textarea id="ta" rows="1" placeholder="message · / for commands · enter sends"></textarea>
+    </div>
+  </div>
+  <div id="ctxmenu" class="ctxmenu">
+    <div class="item" data-act="cut">Cut</div>
+    <div class="item" data-act="copy">Copy</div>
+    <div class="item" data-act="paste">Paste</div>
+    <div class="item" data-act="selectall">Select All</div>
+    <div class="item" data-act="clear">Clear log</div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+const CH_URL = 'http://127.0.0.1:3939';
+const CH_NS  = '/hub';
+
+const SLASH_CMDS = [
+  { cmd: '/help',    desc: 'list commands' },
+  { cmd: '/clear',   desc: 'clear screen' },
+  { cmd: '/fast',    desc: 'haiku, no tools' },
+  { cmd: '/full',    desc: 'claude code, all tools' },
+  { cmd: '/reset',   desc: 'reset history' },
+  { cmd: '/status',  desc: 'bridge status' },
+  { cmd: '/model',   desc: 'switch model' },
+  { cmd: '/tools',   desc: 'list MCP tools' },
+  { cmd: '/agents',  desc: 'list agents' },
+  { cmd: '/swarm',   desc: 'spawn swarm' },
+  { cmd: '/memory',  desc: 'search agentdb' },
+  { cmd: '/tracks',  desc: 'list tracks' },
+  { cmd: '/tempo',   desc: 'set tempo' },
+  { cmd: '/play',    desc: 'play' },
+  { cmd: '/stop',    desc: 'stop' },
+  { cmd: '/cwd',     desc: 'show/change cwd' },
+];
+
+const log = document.getElementById('log');
+const ta  = document.getElementById('ta');
+const menu = document.getElementById('menu');
+const status = document.getElementById('status');
+const modeEl = document.getElementById('mode');
+
+let mode = 'fast';
+
+function ts() {
+  const d = new Date();
+  const z = n => String(n).padStart(2, '0');
+  return `${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+}
+
+function addMsg(kind, label, text) {
+  const div = document.createElement('div');
+  div.className = `msg ${kind}`;
+  div.innerHTML = `<span class="ts">${ts()}</span><span class="lbl">${label}</span><span class="txt"></span>`;
+  div.querySelector('.txt').textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  while (log.childElementCount > 200) log.firstChild.remove();
+}
+
+function setStatus(text, cls) {
+  status.textContent = text;
+  status.className = 'status ' + (cls || '');
+}
+
+function setMode(m) {
+  mode = m;
+  modeEl.textContent = `[${m}]`;
+}
+
+modeEl.onclick = () => sendCmd(mode === 'fast' ? '/full' : '/fast');
+
+let menuItems = [];
+let menuSel = 0;
+
+function showMenu(filter) {
+  const term = filter.toLowerCase();
+  menuItems = SLASH_CMDS.filter(c => c.cmd.toLowerCase().startsWith(term));
+  if (menuItems.length === 0) { menu.classList.remove('open'); return; }
+  menuSel = Math.min(menuSel, menuItems.length - 1);
+  menu.innerHTML = '';
+  menuItems.forEach((it, i) => {
+    const div = document.createElement('div');
+    div.className = 'item' + (i === menuSel ? ' sel' : '');
+    div.innerHTML = `<span class="cmd">${it.cmd}</span><span class="desc">${it.desc}</span>`;
+    div.onclick = () => applyMenu(i);
+    menu.appendChild(div);
+  });
+  const sel = menu.querySelector('.sel');
+  if (sel) sel.scrollIntoView({ block: 'nearest' });
+  menu.classList.add('open');
+}
+
+function hideMenu() { menu.classList.remove('open'); menuItems = []; menuSel = 0; }
+
+function applyMenu(i) {
+  const it = menuItems[i];
+  if (!it) return;
+  ta.value = it.cmd + ' ';
+  hideMenu();
+  ta.focus();
+  autosize();
+}
+
+function autosize() {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 60) + 'px';
+}
+
+ta.addEventListener('input', () => {
+  autosize();
+  const v = ta.value;
+  if (v.startsWith('/') && !v.includes(' ')) showMenu(v); else hideMenu();
+});
+
+ta.addEventListener('keydown', e => {
+  if (menu.classList.contains('open')) {
+    if (e.key === 'ArrowDown') { e.preventDefault(); menuSel = (menuSel+1) % menuItems.length; showMenu(ta.value); return; }
+    if (e.key === 'ArrowUp')   { e.preventDefault(); menuSel = (menuSel-1+menuItems.length) % menuItems.length; showMenu(ta.value); return; }
+    if (e.key === 'Tab')   { e.preventDefault(); applyMenu(menuSel); return; }
+    if (e.key === 'Enter' && menuItems.length === 1 && ta.value.trim() === menuItems[0].cmd.slice(0, ta.value.trim().length)) {
+      e.preventDefault(); applyMenu(menuSel); return;
+    }
+    if (e.key === 'Escape') { hideMenu(); return; }
+  }
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const text = ta.value.trim();
+    if (!text) return;
+    sendCmd(text);
+    ta.value = '';
+    autosize();
+  }
+});
+
+const hx   = s => Array.from(new TextEncoder().encode(String(s))).map(b => b.toString(16).padStart(2,'0')).join('');
+const unhx = s => {
+  try {
+    const m = String(s).match(/.{1,2}/g) || [];
+    return new TextDecoder('utf-8').decode(Uint8Array.from(m, b => parseInt(b, 16)));
+  } catch { return String(s); }
+};
+
+const socket = io(CH_URL + CH_NS, { transports: ['websocket'], reconnection: true });
+
+socket.on('connect', () => {
+  setStatus('online', 'ok');
+  socket.emit('addUsername', { username: 'bar-ui' });
+});
+socket.on('disconnect', () => setStatus('offline', 'err'));
+socket.on('connect_error', e => setStatus('err: ' + e.message, 'err'));
+
+function sendToMax(...args) {
+  try { if (window.max && window.max.outlet) window.max.outlet(...args); } catch {}
+}
+
+socket.on('control', d => {
+  const v = unhx((d.values && d.values[0]) || '');
+  if (d.header === 'claudeOut')         addMsg('claude', 'CLAUDE', v);
+  else if (d.header === 'claudeStep')   addMsg('step', '···', v);
+  else if (d.header === 'claudeStatus') setStatus(v || 'busy', '');
+  else if (d.header === 'claudeMode')   setMode(v || mode);
+  else if (d.header === 'claudeErr')    addMsg('err', 'ERR', v);
+  else if (d.header === 'claudeCursor') {
+    // v format: "kind:idx:idx2"
+    const [kind, a, b] = v.split(':');
+    sendToMax('cursor', kind, parseInt(a, 10), parseInt(b, 10));
+    addMsg('step', '⟶', `${kind} ${a}${b !== '-1' ? '/' + b : ''}`);
+  }
+});
+
+function sendCmd(text) {
+  if (text === '/clear') { log.innerHTML = ''; return; }
+  if (text === '/help') {
+    SLASH_CMDS.forEach(c => addMsg('sys', 'HELP', `${c.cmd.padEnd(10)} ${c.desc}`));
+    return;
+  }
+  if (text === '/fast' || text === '/full') {
+    setMode(text.slice(1));
+  }
+  addMsg('user', 'YOU', text);
+  socket.emit('control', {
+    mode: 'push', target: 'all',
+    header: 'claudeIn', values: [hx(text)],
+  });
+}
+
+// --- right-click context menu (jweb suppresses native browser menu) ---
+const ctx = document.getElementById('ctxmenu');
+let ctxTarget = null;
+
+function hideCtx() { ctx.classList.remove('open'); }
+function showCtx(x, y, target) {
+  ctxTarget = target;
+  ctx.style.left = x + 'px';
+  ctx.style.top = y + 'px';
+  ctx.classList.add('open');
+}
+
+document.addEventListener('contextmenu', e => {
+  e.preventDefault();
+  showCtx(e.clientX, e.clientY, e.target);
+});
+
+document.addEventListener('click', () => hideCtx());
+
+ctx.addEventListener('click', async e => {
+  const act = e.target.dataset.act;
+  if (!act) return;
+  const isInput = ctxTarget && ctxTarget.tagName === 'TEXTAREA';
+  try {
+    if (act === 'copy') {
+      const sel = window.getSelection().toString() || (isInput ? ctxTarget.value : '');
+      if (sel) await navigator.clipboard.writeText(sel);
+    } else if (act === 'cut') {
+      if (isInput) {
+        const s = ctxTarget.selectionStart, e2 = ctxTarget.selectionEnd;
+        const v = ctxTarget.value;
+        const cut = v.slice(s, e2) || v;
+        await navigator.clipboard.writeText(cut);
+        if (cut === v) ctxTarget.value = ''; else ctxTarget.value = v.slice(0, s) + v.slice(e2);
+        autosize();
+      }
+    } else if (act === 'paste') {
+      if (isInput) {
+        const text = await navigator.clipboard.readText();
+        const s = ctxTarget.selectionStart, e2 = ctxTarget.selectionEnd;
+        const v = ctxTarget.value;
+        ctxTarget.value = v.slice(0, s) + text + v.slice(e2);
+        ctxTarget.selectionStart = ctxTarget.selectionEnd = s + text.length;
+        autosize();
+      }
+    } else if (act === 'selectall') {
+      if (isInput) ctxTarget.select();
+      else { const r = document.createRange(); r.selectNodeContents(log); window.getSelection().removeAllRanges(); window.getSelection().addRange(r); }
+    } else if (act === 'clear') {
+      log.innerHTML = '';
+    }
+  } catch (err) { console.error('ctx err', err); }
+  hideCtx();
+});
+
+window.addEventListener('load', () => ta.focus());
+</script>
+</body>
+</html>
