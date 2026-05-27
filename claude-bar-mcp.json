@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "ableton-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["ableton-mcp"],
+      "env": {}
+    }
+  }
+}

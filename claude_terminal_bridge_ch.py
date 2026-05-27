@@ -147,6 +147,10 @@ def _summ_input(d):
 def ask_full(prompt):
     args = ["claude", "--print", "--model", CFG["full"],
             "--permission-mode", "bypassPermissions",
+            # Load ONLY ableton-mcp, not the project .mcp.json (which also pulls the
+            # heavy 15-agent claude-flow server). Loading all of them cold on every
+            # message caused ~53s startups and stalls; this keeps it to ~20s.
+            "--strict-mcp-config", "--mcp-config", os.path.join(CFG["cwd"], "claude-bar-mcp.json"),
             "--append-system-prompt", SYSTEM,
             "--output-format", "stream-json", "--verbose",
             "--session-id", str(uuid.uuid4()),
