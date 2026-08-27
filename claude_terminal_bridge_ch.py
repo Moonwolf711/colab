@@ -34,7 +34,7 @@ CFG = {
     "session":  os.environ.get("CT_SESSION_ID", str(uuid.uuid4())),
     # Minimal tool whitelist — strips ~80% of schema tokens vs loading every MCP.
     "tools":    os.environ.get("CT_TOOLS",
-                "Task Bash Read Write Edit Glob Grep TodoWrite "
+                "Task Bash Read Write Edit Glob Grep TodoWrite ToolSearch "
                 # server-level grant: every tool AbletonBridge exposes, now and later.
                 # Enumerating them by hand drifted twice (missed set_tempo, then the
                 # whole browser/device/arrangement set the newer server added).
@@ -82,7 +82,11 @@ SYSTEM = (
     "  snapshots/macros  : snapshot, restore, morph, parameter maps            (~18)\n"
     "  grid notation     : ASCII drum/melodic pattern I/O                       (~2)\n"
     "  compound          : create instrument/drum track, effect chains         (~11)\n"
-    "  Tool names are mcp__AbletonBridge__*. Prefer a specific tool over raw OSC.\n"
+    "  Tool names are mcp__AbletonBridge__*. Their schemas are DEFERRED - you must\n"
+    "  call ToolSearch to load one before using it, e.g.\n"
+    "    ToolSearch query: select:mcp__AbletonBridge__set_mixer,mcp__AbletonBridge__fire_clip\n"
+    "  Batch EVERY tool the task needs into ONE ToolSearch call - one call per tool\n"
+    "  wastes a round trip each. Prefer a specific tool over raw OSC.\n"
     "  If a call returns \"Unknown command\", the AbletonBridge control surface is not\n"
     "  selected in Live Preferences - say so instead of silently falling back.\n"
     "\n"
@@ -168,9 +172,14 @@ def ask_full(prompt):
             "--allowed-tools", *CFG["tools"].split(),
             "--", prompt]
     try:
+        # AbletonBridge exposes 359 tools. Inlining every schema on every message
+        # refilled the context window within ~3 turns and sent autocompact into a
+        # thrash loop. auto:0 always defers schemas to ToolSearch, so the model
+        # keeps access to all 359 but only pays for the ones it actually opens.
+        child_env = dict(os.environ, ENABLE_TOOL_SEARCH="auto:0")
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 cwd=CFG["cwd"], encoding="utf-8", errors="replace",
-                                bufsize=1)
+                                bufsize=1, env=child_env)
     except FileNotFoundError:
         return "claude CLI not in PATH"
     CURRENT_PROC["p"] = proc
