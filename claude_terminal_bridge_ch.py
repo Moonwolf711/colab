@@ -35,15 +35,10 @@ CFG = {
     # Minimal tool whitelist — strips ~80% of schema tokens vs loading every MCP.
     "tools":    os.environ.get("CT_TOOLS",
                 "Task Bash Read Write Edit Glob Grep TodoWrite "
-                "mcp__ableton-mcp__get_session_info "
-                "mcp__ableton-mcp__get_track_info "
-                "mcp__ableton-mcp__set_clip_name "
-                "mcp__ableton-mcp__create_clip "
-                "mcp__ableton-mcp__add_notes_to_clip "
-                "mcp__ableton-mcp__fire_clip "
-                "mcp__ableton-mcp__stop_clip "
-                "mcp__ableton-mcp__start_playback "
-                "mcp__ableton-mcp__stop_playback"),
+                # server-level grant: every tool ableton-mcp exposes, now and later.
+                # Enumerating them by hand drifted twice (missed set_tempo, then the
+                # whole browser/device/arrangement set the newer server added).
+                "mcp__ableton-mcp"),
 }
 CURRENT_PROC = {"p": None}  # holds the active Popen so /cancel can kill it
 
@@ -71,9 +66,16 @@ SYSTEM = (
     "  - MIDI clips at song-section locators (INTRO 1-8 / BUILD 9-16 / DROP 17-32 /\n"
     "    BREAKDOWN 33-40 / DROP 2 41-56 / OUTRO 57-64). Use create_clip + set_clip_name.\n"
     "\n"
-    "ableton-mcp tools available:\n"
-    "  get_session_info, get_track_info, set_clip_name, create_clip, add_notes_to_clip,\n"
-    "  fire_clip, stop_clip, start_playback, stop_playback.\n"
+    "ableton-mcp tools available (all 19 the Remote Script implements):\n"
+    "  session/track : get_session_info, get_track_info, set_track_name, create_midi_track\n"
+    "  clips         : create_clip, add_notes_to_clip, set_clip_name, fire_clip, stop_clip\n"
+    "  transport     : start_playback, stop_playback, set_tempo\n"
+    "  browser       : get_browser_tree, get_browser_categories, get_browser_item,\n"
+    "                  get_browser_items, get_browser_items_at_path, load_browser_item,\n"
+    "                  load_instrument_or_effect\n"
+    "  NOTE: create_midi_track / load_instrument_or_effect / load_browser_item are\n"
+    "  allowed by the whitelist but BANNED by the HARD RULES above. That ban is policy,\n"
+    "  not capability - obey it unless the user lifts it explicitly.\n"
     "\n"
     "Channel agents (Task tool with subagent_type):\n"
     "  track-drums, track-kick, track-snare, track-cymbols, track-hh, track-hh-closed,\n"
