@@ -11,6 +11,11 @@ import uuid
 
 import _env; _env.load()
 
+# Windows: without this, every spawned console app (claude, and the
+# ableton-bridge.exe it starts) flashes a terminal window over Ableton.
+CREATE_NO_WINDOW = 0x08000000
+
+import voice_narrator
 import socketio
 from anthropic import Anthropic
 
@@ -179,7 +184,8 @@ def ask_full(prompt):
         child_env = dict(os.environ, ENABLE_TOOL_SEARCH="auto:0")
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 cwd=CFG["cwd"], encoding="utf-8", errors="replace",
-                                bufsize=1, env=child_env)
+                                bufsize=1, env=child_env,
+                                creationflags=CREATE_NO_WINDOW)
     except FileNotFoundError:
         return "claude CLI not in PATH"
     CURRENT_PROC["p"] = proc
@@ -215,6 +221,7 @@ def ask_full(prompt):
                     elif ct == "tool_use":
                         nm = c.get("name", "")
                         step(f"→ {nm}({_summ_input(c.get('input'))})")
+                        voice_narrator.say(voice_narrator.humanize(nm, c.get("input")))
                         if "AbletonBridge" in nm:
                             cursor_from_tool(nm.split("__")[-1], c.get("input"))
             elif t == "user":
@@ -226,7 +233,15 @@ def ask_full(prompt):
                         step(f"  ↳ {_summ(content, 100)}")
             elif t == "result":
                 final = ev.get("result") or "\n".join(final_text).strip()
-                proc.wait(timeout=5)
+                voice_narrator.say(final, final=True)
+                # The answer is already in hand. Tearing down the AbletonBridge MCP
+                # server (live socket to Ableton + singleton lock on 9881) can outlast
+                # a short wait, and a slow exit must never discard a good reply.
+                try:
+                    proc.wait(timeout=20)
+                except Exception:
+                    try: proc.kill()
+                    except Exception: pass
                 return final or "(no reply)"
         # stream ended without result
         err = proc.stderr.read() if proc.stderr else ""
@@ -266,6 +281,13 @@ def slash(text):
         return ("answer",
                 "bridge: /fast /full /reset /status /model /cwd /help  ·  "
                 "tools: /tools /agents /swarm /memory /tracks /tempo /play /stop")
+    if cmd == "/voice":
+        want = (rest or "").strip().lower()
+        if want in ("on", "off"):
+            voice_narrator.enabled = (want == "on")
+        state = "on" if voice_narrator.enabled else "off"
+        return ("answer", "voice narration " + state)
+
     translations = {
         "/tools":   "List the MCP tools you have available, grouped by server. Plain text, no markdown.",
         "/agents":  "List the claude-flow agents available via claude-flow MCP. Plain text.",
