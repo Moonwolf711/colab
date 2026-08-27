@@ -35,10 +35,10 @@ CFG = {
     # Minimal tool whitelist — strips ~80% of schema tokens vs loading every MCP.
     "tools":    os.environ.get("CT_TOOLS",
                 "Task Bash Read Write Edit Glob Grep TodoWrite "
-                # server-level grant: every tool ableton-mcp exposes, now and later.
+                # server-level grant: every tool AbletonBridge exposes, now and later.
                 # Enumerating them by hand drifted twice (missed set_tempo, then the
                 # whole browser/device/arrangement set the newer server added).
-                "mcp__ableton-mcp"),
+                "mcp__AbletonBridge"),
 }
 CURRENT_PROC = {"p": None}  # holds the active Popen so /cancel can kill it
 
@@ -46,7 +46,7 @@ SYSTEM = (
     "You are inside Ableton Live in a thin chat bar at the bottom of the screen.\n"
     "\n"
     "HARD RULES for any Ableton action:\n"
-    "  - PRIMARY: ableton-mcp tools (names start with `mcp__ableton-mcp__`) for tracks,\n"
+    "  - PRIMARY: AbletonBridge tools (names start with `mcp__AbletonBridge__`) for tracks,\n"
     "    clips, notes, playback.\n"
     "  - SECONDARY: AbletonOSC via the helper:\n"
     "      `python C:/Users/Owner/colab/osc.py <address> [args...]`\n"
@@ -68,23 +68,23 @@ SYSTEM = (
     "  - MIDI clips at song-section locators (INTRO 1-8 / BUILD 9-16 / DROP 17-32 /\n"
     "    BREAKDOWN 33-40 / DROP 2 41-56 / OUTRO 57-64). Use create_clip + set_clip_name.\n"
     "\n"
-    "ableton-mcp tools (Remote Script 1.7.0 - 37 commands):\n"
-    "  session/track : get_session_info, get_track_info, set_track_name, create_midi_track\n"
-    "  clips         : create_clip, add_notes_to_clip, set_clip_name, fire_clip, stop_clip\n"
-    "  transport     : start_playback, stop_playback, set_tempo\n"
-    "  browser       : get_browser_tree, get_browser_categories, get_browser_item,\n"
-    "                  get_browser_items, get_browser_items_at_path, load_browser_item,\n"
-    "                  load_instrument_or_effect\n"
-    "  devices/racks : get_device_parameters, set_device_parameter, inspect_rack,\n"
-    "                  map_rack_magnitude\n"
-    "  arrangement   : get_arrangement_clips, set_arrangement_clip_name,\n"
-    "                  duplicate_session_clip_to_arrangement, switch_to_arrangement_view,\n"
-    "                  create_locator, set_current_song_time\n"
-    "  clip editing  : get_clip_notes, clear_notes_from_clip, delete_clip,\n"
-    "                  create_audio_clip, create_audio_track, load_drum_kit\n"
-    "  session       : get_session_snapshot, get_script_info\n"
-    "  If a call returns \"Unknown command\", the Remote Script did not reload - say so\n"
-    "  rather than silently falling back.\n"
+    "AbletonBridge tools (Remote Script 3.5.0 - 340 core + 19 optional):\n"
+    "  session/transport : tempo, play/record, capture, Link, punch, position  (~53)\n"
+    "  tracks/mixing     : create/rename/route/group/arm, monitoring           (~29)\n"
+    "  clips/scenes      : create/edit clips, follow actions, warp markers     (~54)\n"
+    "  mixer             : set_mixer, batch_set_mixer, sends, crossfader       (~13)\n"
+    "  devices/params    : load/configure, rack chains+macros, sidechain       (~45)\n"
+    "  browser/presets   : search + load instruments, presets                  (~12)\n"
+    "  automation        : clip/track automation, envelopes, curves            (~12)\n"
+    "  arrangement       : arrangement clips, time editing, analysis           (~17)\n"
+    "  generation        : euclidean, chords, drums, arps, bass, transforms    (~17)\n"
+    "  deep access (M4L) : hidden params, chain internals, note surgery        (~40)\n"
+    "  snapshots/macros  : snapshot, restore, morph, parameter maps            (~18)\n"
+    "  grid notation     : ASCII drum/melodic pattern I/O                       (~2)\n"
+    "  compound          : create instrument/drum track, effect chains         (~11)\n"
+    "  Tool names are mcp__AbletonBridge__*. Prefer a specific tool over raw OSC.\n"
+    "  If a call returns \"Unknown command\", the AbletonBridge control surface is not\n"
+    "  selected in Live Preferences - say so instead of silently falling back.\n"
     "\n"
     "Channel agents (Task tool with subagent_type):\n"
     "  track-drums, track-kick, track-snare, track-cymbols, track-hh, track-hh-closed,\n"
@@ -117,7 +117,7 @@ def cursor(kind, idx=-1, idx2=-1): emit(CFG["h_curs"], f"{kind}:{idx}:{idx2}")
 
 
 def cursor_from_tool(name, inp):
-    """Map ableton-mcp tool calls to a cursor target inside Ableton."""
+    """Map AbletonBridge tool calls to a cursor target inside Ableton."""
     inp = inp if isinstance(inp, dict) else {}
     n = (name or "").lower()
     ti = inp.get("track_index", inp.get("track", -1))
@@ -158,7 +158,7 @@ def _summ_input(d):
 def ask_full(prompt):
     args = ["claude", "--print", "--model", CFG["full"],
             "--permission-mode", "bypassPermissions",
-            # Load ONLY ableton-mcp, not the project .mcp.json (which also pulls the
+            # Load ONLY AbletonBridge, not the project .mcp.json (which also pulls the
             # heavy 15-agent claude-flow server). Loading all of them cold on every
             # message caused ~53s startups and stalls; this keeps it to ~20s.
             "--strict-mcp-config", "--mcp-config", os.path.join(CFG["cwd"], "claude-bar-mcp.json"),
@@ -206,7 +206,7 @@ def ask_full(prompt):
                     elif ct == "tool_use":
                         nm = c.get("name", "")
                         step(f"→ {nm}({_summ_input(c.get('input'))})")
-                        if "ableton-mcp" in nm:
+                        if "AbletonBridge" in nm:
                             cursor_from_tool(nm.split("__")[-1], c.get("input"))
             elif t == "user":
                 for c in ev.get("message", {}).get("content", []):
@@ -262,10 +262,10 @@ def slash(text):
         "/agents":  "List the claude-flow agents available via claude-flow MCP. Plain text.",
         "/swarm":   f"Spawn a claude-flow swarm to: {rest}" if rest else "Explain how to spawn a swarm.",
         "/memory":  f"Search agentdb memory for: {rest}" if rest else "Show memory stats via claude-flow MCP.",
-        "/tracks":  "Call ableton-mcp get_session_info, then for tracks 0-12 call get_track_info; list index + name. Plain text.",
-        "/tempo":   f"Set the ableton tempo to {rest} using ableton-mcp set_tempo." if rest else "Ask user what tempo.",
-        "/play":    "Start ableton playback using ableton-mcp start_playback.",
-        "/stop":    "Stop ableton playback using ableton-mcp stop_playback.",
+        "/tracks":  "Call AbletonBridge get_session_info, then for tracks 0-12 call get_track_info; list index + name. Plain text.",
+        "/tempo":   f"Set the ableton tempo to {rest} using AbletonBridge set_tempo." if rest else "Ask user what tempo.",
+        "/play":    "Start ableton playback using AbletonBridge start_playback.",
+        "/stop":    "Stop ableton playback using AbletonBridge stop_playback.",
     }
     if cmd in translations:
         return ("prompt", translations[cmd])

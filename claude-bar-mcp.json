@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "ableton-mcp": {
+    "AbletonBridge": {
       "type": "stdio",
-      "command": "uvx",
-      "args": ["ableton-mcp"],
+      "command": "E:\\Projects\\AbletonBridge\\.venv\\Scripts\\ableton-bridge.exe",
+      "args": [],
       "env": {}
     }
   }
