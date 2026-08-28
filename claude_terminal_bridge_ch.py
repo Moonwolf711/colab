@@ -4,6 +4,7 @@ control:claudeIn -> Haiku (fast) or `claude --print` (full) -> control:claudeOut
 """
 import json
 import os
+import queue
 import subprocess
 import threading
 import time
@@ -32,8 +33,9 @@ CFG = {
     "h_curs":   "claudeCursor",
     "cwd":      os.environ.get("CT_CWD", r"C:\Users\Owner\colab"),
     "fast":     os.environ.get("CT_MODEL_FAST", "claude-haiku-4-5-20251001"),
-    "full":     os.environ.get("CT_MODEL_FULL", "claude-sonnet-4-6"),
-    "mode":     os.environ.get("CT_MODE", "fast"),
+    "full":     os.environ.get("CT_MODEL_FULL", "claude-opus-5"),
+    "effort":   os.environ.get("CT_EFFORT", "xhigh"),
+    "mode":     os.environ.get("CT_MODE", "full"),
     # Dedicated session UUID so --continue / --session-id never picks up the user's
     # main Claude Code session and dumps its history into our bar.
     "session":  os.environ.get("CT_SESSION_ID", str(uuid.uuid4())),
@@ -102,10 +104,28 @@ SYSTEM = (
     "  track-rise-1, track-rise-2, track-rise-3, track-down-1, track-down-2,\n"
     "  track-down-3, track-vocals, track-vox.\n"
     "Each agent carries its own OSC parameter whitelist and section-locator pattern map.\n"
-    "Delegate via Task tool — never edit a channel without its specialist agent.\n"
+    "Use them for multi-channel arrangement jobs; for a single-channel edit act directly\n"
+    "from the TEMPLATE MAP below — it is faster and the map is ground truth.\n"
     "\n"
     "Replies: plain text, 1-3 sentences. No markdown."
 )
+TEMPLATE_MAP_PATH = os.path.join(CFG["cwd"], "template-map.md")
+
+
+def load_template_map():
+    """Channel/device/sample map for the user's template. Hand-edited; re-read on bridge start."""
+    try:
+        with open(TEMPLATE_MAP_PATH, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+_TM = load_template_map()
+if _TM:
+    SYSTEM += ("\n\nTEMPLATE MAP (ground truth: channel names, what is on each channel, "
+               "sample paths):\n" + _TM)
+
 HISTORY: list[dict] = []
 LOCK = threading.Lock()
 
@@ -166,7 +186,8 @@ def _summ_input(d):
 
 def ask_full(prompt):
     args = ["claude", "--print", "--model", CFG["full"],
-            "--permission-mode", "bypassPermissions",
+            "--effort", CFG["effort"],
+            "--dangerously-skip-permissions",
             # Load ONLY AbletonBridge, not the project .mcp.json (which also pulls the
             # heavy 15-agent claude-flow server). Loading all of them cold on every
             # message caused ~53s startups and stalls; this keeps it to ~20s.
@@ -193,8 +214,28 @@ def ask_full(prompt):
     deadline = time.time() + 1800
 
     final_text = []
+    # Reader thread + queue: `for line in proc.stdout` blocked forever when claude emitted
+    # nothing (the deadline was only checked per line). Now silence itself times out.
+    q: queue.Queue = queue.Queue()
+
+    def _pump():
+        try:
+            for ln in proc.stdout:
+                q.put(ln)
+        finally:
+            q.put(None)
+
+    threading.Thread(target=_pump, daemon=True).start()
+    idle = int(os.environ.get("CT_IDLE_TIMEOUT", "600"))
     try:
-        for line in proc.stdout:
+        while True:
+            try:
+                line = q.get(timeout=idle)
+            except queue.Empty:
+                proc.kill()
+                return f"aborted: no output for {idle}s (claude wedged)"
+            if line is None:
+                break
             if time.time() > deadline:
                 proc.kill()
                 return "aborted: 30 min wall hit"
@@ -269,7 +310,12 @@ def slash(text):
     if cmd == "/reset":
         HISTORY.clear(); return ("answer", "history cleared")
     if cmd == "/status":
-        return ("answer", f"mode={CFG['mode']} model={CFG[CFG['mode']]} cwd={CFG['cwd']} hist={len(HISTORY)}")
+        return ("answer", f"mode={CFG['mode']} model={CFG[CFG['mode']]} effort={CFG['effort']} "
+                          f"cwd={CFG['cwd']} hist={len(HISTORY)} map={'yes' if _TM else 'MISSING'}")
+    if cmd == "/effort":
+        if rest in ("low", "medium", "high", "xhigh", "max"):
+            CFG["effort"] = rest; return ("answer", f"effort -> {rest}")
+        return ("answer", f"effort={CFG['effort']} (low|medium|high|xhigh|max)")
     if cmd == "/model":
         if rest: CFG[CFG["mode"]] = rest; return ("answer", f"{CFG['mode']} model -> {rest}")
         return ("answer", f"fast={CFG['fast']}  full={CFG['full']}")
@@ -279,7 +325,7 @@ def slash(text):
         CFG["cwd"] = rest; return ("answer", f"cwd -> {rest}")
     if cmd == "/help":
         return ("answer",
-                "bridge: /fast /full /reset /status /model /cwd /help  ·  "
+                "bridge: /fast /full /reset /status /model /effort /cwd /help  ·  "
                 "tools: /tools /agents /swarm /memory /tracks /tempo /play /stop")
     if cmd == "/voice":
         want = (rest or "").strip().lower()
@@ -293,7 +339,7 @@ def slash(text):
         "/agents":  "List the claude-flow agents available via claude-flow MCP. Plain text.",
         "/swarm":   f"Spawn a claude-flow swarm to: {rest}" if rest else "Explain how to spawn a swarm.",
         "/memory":  f"Search agentdb memory for: {rest}" if rest else "Show memory stats via claude-flow MCP.",
-        "/tracks":  "Call AbletonBridge get_session_info, then for tracks 0-12 call get_track_info; list index + name. Plain text.",
+        "/tracks":  "Call AbletonBridge get_session_info, then get_track_info for every index below track_count; list index + name. Plain text.",
         "/tempo":   f"Set the ableton tempo to {rest} using AbletonBridge set_tempo." if rest else "Ask user what tempo.",
         "/play":    "Start ableton playback using AbletonBridge start_playback.",
         "/stop":    "Stop ableton playback using AbletonBridge stop_playback.",
@@ -363,6 +409,7 @@ def on_control(data):
 
 
 if __name__ == "__main__":
-    log(f"-> {CFG['url']}{CFG['ns']}  fast={CFG['fast']}  full={CFG['full']}")
+    log(f"-> {CFG['url']}{CFG['ns']}  fast={CFG['fast']}  full={CFG['full']} "
+        f"effort={CFG['effort']} mode={CFG['mode']} map={len(_TM)}B")
     sio.connect(CFG["url"], namespaces=[CFG["ns"]], transports=["websocket"], wait=True, wait_timeout=10)
     sio.wait()
