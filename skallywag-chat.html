@@ -45,6 +45,14 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
 .input .prompt { color: var(--accent); }
 #ta { flex: 1; background: transparent; border: none; outline: none; color: var(--text);
   font: inherit; resize: none; padding: 3px 0; max-height: 60px; line-height: 1.3; }
+#mic { flex: 0 0 auto; width: 28px; height: 28px; cursor: pointer; border-radius: 50%;
+  opacity: .85; transition: opacity .15s; }
+#mic:hover { opacity: 1; }
+.vbar { height: 0; overflow: hidden; background: #1c2230; border-radius: 2px; margin: 0 2px;
+  transition: height .15s; }
+.vbar.on { height: 3px; }
+#vbarfill { height: 100%; width: 0; border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--sys)); }
 .menu { position: absolute; bottom: 100%; left: 18px; right: 8px; max-height: 110px; overflow-y: auto;
   background: #161a23; border: 1px solid #2a3040; border-radius: 3px; display: none; z-index: 10;
   box-shadow: 0 -4px 12px rgba(0,0,0,0.4); }
@@ -54,7 +62,7 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
 .menu .item .cmd { color: var(--accent); }
 .menu .item .desc { color: var(--muted); margin-left: 8px; }
 .ctxmenu { position: fixed; background: #161a23; border: 1px solid #2a3040; border-radius: 4px;
-  min-width: 130px; z-index: 100; display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.5); }
+  min-width: 130px; z-index: 100; display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.5); max-height: calc(100vh - 8px); overflow-y: auto; }
 .ctxmenu.open { display: block; }
 .ctxmenu .item { padding: 5px 12px; cursor: pointer; font-size: 11px; color: var(--text); }
 .ctxmenu .item:hover { background: #2a3040; }
@@ -70,10 +78,12 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
   </div>
   <div id="log" class="log"></div>
   <div class="input-wrap">
+    <div id="vbar" class="vbar"><div id="vbarfill"></div></div>
     <div id="menu" class="menu"></div>
     <div class="input">
       <span class="prompt">&gt;</span>
       <textarea id="ta" rows="1" placeholder="message · / for commands · enter sends"></textarea>
+      <canvas id="mic" width="56" height="56" title="Click and speak a command" aria-label="Voice command"></canvas>
     </div>
   </div>
   <div id="ctxmenu" class="ctxmenu">
@@ -97,6 +107,7 @@ const SLASH_CMDS = [
   { cmd: '/full',    desc: 'skallywag code, all tools' },
   { cmd: '/reset',   desc: 'reset history' },
   { cmd: '/status',  desc: 'bridge status' },
+  { cmd: '/voice',   desc: 'on | off | <voice_id>' },
   { cmd: '/model',   desc: 'switch model' },
   { cmd: '/tools',   desc: 'list MCP tools' },
   { cmd: '/agents',  desc: 'list agents' },
@@ -233,18 +244,49 @@ function onQResult(id, hexJson) {
   try { socket.emit('control', { header: 'swQueryResult', values: [hx(String(id)), String(hexJson)] }); } catch {}
 }
 (function bindMax(tries) {
-  if (window.max && window.max.addHandlers) window.max.addHandlers({ qresult: onQResult });
+  const m = window.max;
+  if (m && typeof m.bindInlet === 'function') m.bindInlet('qresult', onQResult);      // jweb API (Max 8/9)
+  else if (m && typeof m.addHandlers === 'function') m.addHandlers({ qresult: onQResult });
   else if (tries > 0) setTimeout(() => bindMax(tries - 1), 300);
 })(20);
 
+// transcription progress bar: creep to ~92% over the estimated time, snap to 100% on result
+const vbar = document.getElementById('vbar'), vfill = document.getElementById('vbarfill');
+function startVoiceBar(est) {
+  if (!vbar) return;
+  vbar.classList.add('on');
+  vfill.style.transition = 'none'; vfill.style.width = '0%';
+  void vfill.offsetWidth; // force reflow so the next transition animates
+  vfill.style.transition = 'width ' + Math.max(0.5, est) + 's linear';
+  vfill.style.width = '92%';
+  setStatus('transcribing…', '');
+}
+function finishVoiceBar() {
+  if (!vbar) return;
+  vfill.style.transition = 'width .2s ease-out'; vfill.style.width = '100%';
+  setTimeout(() => { vbar.classList.remove('on'); vfill.style.transition = 'none'; vfill.style.width = '0%'; }, 350);
+}
+
 socket.on('control', d => {
   const v = unhx((d.values && d.values[0]) || '');
+  if (d.header === 'voiceLevel') { if (typeof voice !== 'undefined' && voice.level) voice.level(parseFloat(v) || 0); return; }
+  if (d.header === 'voiceState') { if (typeof voice !== 'undefined' && voice.setListening) voice.setListening(v === 'on'); if (v === 'off') finishVoiceBar(); return; }
+  if (d.header === 'voiceProcessing') { startVoiceBar(parseFloat(v) || 1.5); return; }
+  if (d.header === 'voiceText') {
+    if (typeof voice !== 'undefined' && voice.setListening) voice.setListening(false);
+    finishVoiceBar();
+    const t = (v || '').trim();
+    if (t) { ta.value = t; autosize(); setStatus('heard ✓', 'ok'); setTimeout(() => { sendCmd(t); ta.value = ''; autosize(); }, 900); }
+    else { setStatus('didn’t catch that', ''); }
+    return;
+  }
   if (d.header === 'swAct') { sendToMax('act', ...v.split(' ')); addMsg('step', '⟶', v); return; }
   if (d.header === 'swOut')         addMsg('skallywag', 'SKALLYWAG', v);
   else if (d.header === 'swStep')   addMsg('step', '···', v);
   else if (d.header === 'swStatus') setStatus(v || 'busy', '');
   else if (d.header === 'swMode')   setMode(v || mode);
   else if (d.header === 'swErr')    addMsg('err', 'ERR', v);
+  else if (d.header === 'swVoice')  playVoice(v);
   else if (d.header === 'swCursor') {
     // v format: "kind:idx:idx2"
     const [kind, a, b] = v.split(':');
@@ -252,6 +294,15 @@ socket.on('control', d => {
     addMsg('step', '⟶', `${kind} ${a}${b !== '-1' ? '/' + b : ''}`);
   }
 });
+
+let voiceEl = null;
+function playVoice(b64) {                                   // agent -> ElevenLabs mp3 (base64); Chromium inside jweb plays it
+  try {
+    if (voiceEl) { voiceEl.pause(); voiceEl = null; }
+    voiceEl = new Audio('data:audio/mpeg;base64,' + b64);
+    voiceEl.play().catch(() => {});                         // autoplay may be refused before the first click/keypress
+  } catch (_) {}
+}
 
 function sendCmd(text) {
   if (text === '/clear') { log.innerHTML = ''; return; }
@@ -269,6 +320,67 @@ function sendCmd(text) {
   });
 }
 
+// --- voice: animated circular waveform. jweb can't open the mic, so a small mic
+//     helper captures audio, streams levels here (voiceLevel) for the animation,
+//     transcribes on stop, and sends the command. getUserMedia is tried too in
+//     case the webview ever grants mic — then the ring reacts to local audio. ---
+const voice = (function () {
+  const c = document.getElementById('mic'); if (!c) return {};
+  const cx2 = c.getContext('2d'), DPR = 2;
+  let listening = false, level = 0, phase = 0;
+  let audioCtx = null, analyser = null, dataArr = null, stream = null;
+
+  function draw() {
+    const w = c.width, h = c.height, cx = w / 2, cy = h / 2, base = 8 * DPR;
+    cx2.clearRect(0, 0, w, h);
+    const lv = listening ? level : 0;
+    const R = base + lv * 8 * DPR + (listening ? Math.sin(phase) * 1.2 * DPR : 0);
+    cx2.beginPath(); cx2.arc(cx, cy, R + 3 * DPR, 0, Math.PI * 2);
+    cx2.fillStyle = listening ? 'rgba(91,140,255,' + (0.12 + lv * 0.22) + ')' : 'rgba(107,114,128,0.10)'; cx2.fill();
+    cx2.lineWidth = 1.6 * DPR; cx2.strokeStyle = listening ? '#5b8cff' : '#6b7280';
+    cx2.beginPath();
+    const N = 30;
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const amp = listening ? (Math.sin(phase * 2 + i * 0.7) * 0.5 + 0.5) * lv : 0;
+      const rr = R + amp * 7 * DPR, x = cx + Math.cos(a) * rr, y = cy + Math.sin(a) * rr;
+      i === 0 ? cx2.moveTo(x, y) : cx2.lineTo(x, y);
+    }
+    cx2.closePath(); cx2.stroke();
+    cx2.beginPath(); cx2.arc(cx, cy, 2.5 * DPR, 0, Math.PI * 2);
+    cx2.fillStyle = listening ? '#ff5c5c' : '#5b8cff'; cx2.fill();
+    phase += 0.18;
+    if (analyser) { analyser.getByteTimeDomainData(dataArr); let s = 0; for (let i = 0; i < dataArr.length; i++) { const v = (dataArr[i] - 128) / 128; s += v * v; } level = Math.min(1, Math.sqrt(s / dataArr.length) * 3.5); }
+    else if (listening) level *= 0.9; // decay between helper updates
+    requestAnimationFrame(draw);
+  }
+  draw();
+
+  async function tryLocalMic() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = audioCtx.createAnalyser(); analyser.fftSize = 256;
+      audioCtx.createMediaStreamSource(stream).connect(analyser);
+      dataArr = new Uint8Array(analyser.fftSize); return true;
+    } catch (e) { analyser = null; return false; }
+  }
+  function stopLocalMic() { try { stream && stream.getTracks().forEach(t => t.stop()); } catch {} try { audioCtx && audioCtx.close(); } catch {} analyser = null; audioCtx = null; stream = null; }
+
+  c.onclick = async () => {
+    if (!listening) {
+      listening = true; setStatus('listening…', '');
+      socket.emit('control', { mode: 'push', target: 'all', header: 'voiceStart', values: [hx('1')] });
+      await tryLocalMic();
+    } else {
+      listening = false; level = 0; setStatus('thinking…', ''); stopLocalMic();
+      socket.emit('control', { mode: 'push', target: 'all', header: 'voiceStop', values: [hx('1')] });
+    }
+  };
+  return { level: (v) => { if (listening && !analyser) level = Math.max(level, Math.min(1, v)); },
+           setListening: (b) => { listening = b; } };
+})();
+
 // --- right-click context menu (jweb suppresses native browser menu) ---
 const ctx = document.getElementById('ctxmenu');
 let ctxTarget = null;
@@ -276,9 +388,13 @@ let ctxTarget = null;
 function hideCtx() { ctx.classList.remove('open'); }
 function showCtx(x, y, target) {
   ctxTarget = target;
-  ctx.style.left = x + 'px';
-  ctx.style.top = y + 'px';
-  ctx.classList.add('open');
+  ctx.classList.add('open');                                 // open first so the menu has a size to measure
+  const pad = 4, w = ctx.offsetWidth, h = ctx.offsetHeight, vw = window.innerWidth, vh = window.innerHeight;
+  let left = x, top = y;
+  if (top + h > vh - pad) top = (y - h >= pad) ? y - h : Math.max(pad, vh - h - pad);   // flip above the click, else pin to the bottom edge
+  if (left + w > vw - pad) left = Math.max(pad, vw - w - pad);                          // keep it inside the panel's width
+  ctx.style.left = left + 'px';
+  ctx.style.top = top + 'px';
 }
 
 document.addEventListener('contextmenu', e => {
