@@ -19,7 +19,7 @@
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
   font: 11px/1.35 'JetBrains Mono', Consolas, monospace; overflow: hidden; }
-.wrap { display: flex; flex-direction: column; height: 100%; }
+.wrap { position: relative; display: flex; flex-direction: column; height: 100%; }
 .head { flex: 0 0 16px; padding: 0 8px; background: var(--panel); border-bottom: 1px solid var(--line);
   display: flex; justify-content: space-between; align-items: center; font-size: 10px; line-height: 16px; }
 .title { color: var(--accent); letter-spacing: 0.08em; }
@@ -64,6 +64,15 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
 .ctxmenu { position: fixed; background: #161a23; border: 1px solid #2a3040; border-radius: 4px;
   min-width: 130px; z-index: 100; display: none; box-shadow: 0 4px 14px rgba(0,0,0,0.5); max-height: calc(100vh - 8px); overflow-y: auto; }
 .ctxmenu.open { display: block; }
+.intro { position: absolute; left: 0; right: 0; top: 17px; bottom: 0; background: var(--bg); z-index: 50; display: none; flex-direction: column; gap: 5px; padding: 6px 10px; }
+.intro.open { display: flex; }
+.intro .step { color: var(--muted); font-size: 10px; }
+.intro .q { color: var(--text); font-size: 12px; }
+.intro .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.intro .opt { border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 3px 10px; border-radius: 4px; cursor: pointer; font: inherit; font-size: 11px; }
+.intro .opt:hover { border-color: var(--accent); color: var(--accent); }
+.intro .foot { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-top: auto; }
+.intro .link { cursor: pointer; } .intro .link:hover { color: var(--accent); }
 .ctxmenu .item { padding: 5px 12px; cursor: pointer; font-size: 11px; color: var(--text); }
 .ctxmenu .item:hover { background: #2a3040; }
 .ctxmenu .item.disabled { color: var(--muted); cursor: default; }
@@ -85,6 +94,12 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
       <textarea id="ta" rows="1" placeholder="message · / for commands · enter sends"></textarea>
       <canvas id="mic" width="56" height="56" title="Click and speak a command" aria-label="Voice command"></canvas>
     </div>
+  </div>
+  <div id="intro" class="intro">
+    <div class="step" id="introStep"></div>
+    <div class="q" id="introQ"></div>
+    <div class="opts" id="introOpts"></div>
+    <div class="foot"><span>Four quick questions so the first mate knows who is on deck.</span><span class="link" id="introSkip">skip</span></div>
   </div>
   <div id="ctxmenu" class="ctxmenu">
     <div class="item" data-act="cut">Cut</div>
@@ -108,6 +123,7 @@ const SLASH_CMDS = [
   { cmd: '/reset',   desc: 'reset history' },
   { cmd: '/status',  desc: 'bridge status' },
   { cmd: '/voice',   desc: 'on | off | <voice_id>' },
+  { cmd: '/intro',   desc: 'redo the four intro questions' },
   { cmd: '/model',   desc: 'switch model' },
   { cmd: '/tools',   desc: 'list MCP tools' },
   { cmd: '/agents',  desc: 'list agents' },
@@ -304,8 +320,38 @@ function playVoice(b64) {                                   // agent -> ElevenLa
   } catch (_) {}
 }
 
+// --- intro questionnaire: first open (or /intro). Answers -> localStorage + swProfile to the agent ---
+const INTRO_Q = [
+  { key: 'years',     q: 'How many years have you been producing?',                        opts: ['Zero', '1\u20132', '2\u20135', '5\u20139', '10+'] },
+  { key: 'plugins',   q: 'Do you normally use stock plugins, third-party, or a hybrid?',     opts: ['Stock', 'Third-party', 'Hybrid'] },
+  { key: 'mastering', q: 'Do you master your tracks yourself?',                             opts: ['Yes, I master my own', 'I send them to a mastering engineer', 'I jam and record \u2014 someone else masters', 'Not yet'] },
+  { key: 'template',  q: 'Do you use a template when you start tracking?',                  opts: ['Sometimes', 'Always', 'Different templates for different projects', 'Never'] },
+];
+const intro = document.getElementById('intro');
+let introA = {};
+function introShow(i) {
+  const q = INTRO_Q[i];
+  document.getElementById('introStep').textContent = `${i + 1} / ${INTRO_Q.length}`;
+  document.getElementById('introQ').textContent = q.q;
+  const box = document.getElementById('introOpts'); box.innerHTML = '';
+  q.opts.forEach(o => { const b = document.createElement('button'); b.className = 'opt'; b.textContent = o;
+    b.onclick = () => { introA[q.key] = o; if (i + 1 < INTRO_Q.length) introShow(i + 1); else introDone(); }; box.appendChild(b); });
+  intro.classList.add('open');
+}
+function introDone() {
+  intro.classList.remove('open');
+  try { localStorage.setItem('skw_profile', JSON.stringify(introA)); } catch (_) {}
+  socket.emit('control', { mode: 'push', target: 'all', header: 'swProfile', values: [hx(JSON.stringify(introA))] });
+  addMsg('sys', 'CREW', `${introA.years} years \u00b7 ${introA.plugins} plugins \u00b7 ${introA.mastering} \u00b7 template: ${introA.template}   (/intro to change)`);
+  ta.focus();
+}
+document.getElementById('introSkip').onclick = () => { intro.classList.remove('open'); try { localStorage.setItem('skw_profile', '{}'); } catch (_) {} ta.focus(); };
+let savedProfile = null; try { savedProfile = localStorage.getItem('skw_profile'); } catch (_) {}
+if (!savedProfile) setTimeout(() => introShow(0), 400);
+
 function sendCmd(text) {
   if (text === '/clear') { log.innerHTML = ''; return; }
+  if (text === '/intro') { introA = {}; introShow(0); return; }
   if (text === '/help') {
     SLASH_CMDS.forEach(c => addMsg('sys', 'HELP', `${c.cmd.padEnd(10)} ${c.desc}`));
     return;
