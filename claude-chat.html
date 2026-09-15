@@ -65,7 +65,7 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
 <body>
 <div class="wrap">
   <div class="head">
-    <span><span class="title">CLAUDE</span> <span class="mode" id="mode" title="click to toggle fast/full">[fast]</span></span>
+    <span><span class="title">CLAUDE</span> <span class="mode" id="mode" title="click to toggle fast/full">[full]</span></span>
     <span id="status" class="status">connecting…</span>
   </div>
   <div id="log" class="log"></div>
@@ -87,14 +87,14 @@ html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text);
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script>
-const CH_URL = 'http://127.0.0.1:3939';
+const CH_URL = 'http://127.0.0.1:3990';
 const CH_NS  = '/hub';
 
 const SLASH_CMDS = [
   { cmd: '/help',    desc: 'list commands' },
   { cmd: '/clear',   desc: 'clear screen' },
-  { cmd: '/fast',    desc: 'haiku, no tools' },
-  { cmd: '/full',    desc: 'claude code, all tools' },
+  { cmd: '/fast',    desc: 'opus 5 quick chat, no tools' },
+  { cmd: '/full',    desc: 'opus 5 + ableton tools' },
   { cmd: '/reset',   desc: 'reset history' },
   { cmd: '/status',  desc: 'bridge status' },
   { cmd: '/model',   desc: 'switch model' },
@@ -115,7 +115,7 @@ const menu = document.getElementById('menu');
 const status = document.getElementById('status');
 const modeEl = document.getElementById('mode');
 
-let mode = 'fast';
+let mode = 'full';  // matches the bridge default (CT_MODE=full)
 
 function ts() {
   const d = new Date();

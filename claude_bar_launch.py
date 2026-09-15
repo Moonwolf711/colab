@@ -27,9 +27,9 @@ def llog(msg: str) -> None:
 
 
 def our_server_listening() -> bool:
-    """True only if our CH server is LISTENING on 127.0.0.1:3939.
+    """True only if our CH server is LISTENING on 127.0.0.1:3990.
 
-    Match the literal 127.0.0.1:3939 listen entry rather than a connect-probe so a
+    Match the literal 127.0.0.1:3990 listen entry rather than a connect-probe so a
     foreign listener on the same port can never produce a false positive.
     """
     try:
@@ -40,7 +40,7 @@ def our_server_listening() -> bool:
     except Exception:
         return False
     for line in out.splitlines():
-        if "127.0.0.1:3939 " in line and "LISTENING" in line.upper():
+        if "127.0.0.1:3990 " in line and "LISTENING" in line.upper():
             return True
     return False
 
@@ -68,7 +68,7 @@ def spawn(script: str, name: str) -> int:
 
 def ensure_server() -> str:
     if our_server_listening():
-        return "server: already listening on 127.0.0.1:3939"
+        return "server: already listening on 127.0.0.1:3990"
     spawn("ch_local_server.py", "server")
     for _ in range(24):  # up to ~6s for eventlet to bind
         if our_server_listening():

@@ -1,10 +1,10 @@
 # Registers a per-user logon task that keeps the ClaudeBar M4L device working:
-# it starts the local Collab-Hub server (127.0.0.1:3939) + the Claude bridge so the
+# it starts the local Collab-Hub server (127.0.0.1:3990) + the Claude bridge so the
 # jweb bar can connect the moment Ableton loads it. Idempotent — safe to re-run.
 #
 #   pwsh -ExecutionPolicy Bypass -File install-claude-bar-autostart.ps1
 #
-# Port 3939 (not 3000) is deliberate: 3000 collides with Docker Desktop's wildcard
+# Port 3990 (not 3000, not 3939) is deliberate: 3939 is Skallywag's hub; 3000 collides with Docker Desktop's wildcard
 # bind and intermittently fails with WinError 10013.
 
 $ErrorActionPreference = 'Stop'

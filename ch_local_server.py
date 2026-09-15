@@ -7,7 +7,7 @@ import time
 
 NS = "/hub"
 HOST = "127.0.0.1"
-PORT = 3939  # private port for the ClaudeBar stack; 3000 collides with Docker's wildcard bind
+PORT = 3990  # private port for the ClaudeBar stack; 3000 collides with Docker's wildcard bind, 3939 is Skallywag's hub
 
 sio = socketio.Server(cors_allowed_origins="*", async_mode="eventlet", logger=False)
 app = socketio.WSGIApp(sio)

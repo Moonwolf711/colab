@@ -1,6 +1,6 @@
 """Claude bridge: Collab-Hub <-> Anthropic API / Claude Code CLI.
 
-control:claudeIn -> Haiku (fast) or `claude --print` (full) -> control:claudeOut.
+control:claudeIn -> Opus 5 via the API (fast) or `claude --print` (full) -> control:claudeOut.
 """
 import json
 import os
@@ -22,7 +22,7 @@ from anthropic import Anthropic
 
 
 CFG = {
-    "url":      os.environ.get("CH_SERVER", "http://127.0.0.1:3939"),
+    "url":      os.environ.get("CH_SERVER", "http://127.0.0.1:3990"),
     "ns":       "/" + os.environ.get("CH_NAMESPACE", "hub"),
     "user":     os.environ.get("CH_USERNAME", "claude-bridge"),
     "h_in":     os.environ.get("CH_HEADER_IN", "claudeIn"),
@@ -32,7 +32,8 @@ CFG = {
     "h_step":   "claudeStep",
     "h_curs":   "claudeCursor",
     "cwd":      os.environ.get("CT_CWD", r"C:\Users\Owner\colab"),
-    "fast":     os.environ.get("CT_MODEL_FAST", "claude-haiku-4-5-20251001"),
+    "fast":     os.environ.get("CT_MODEL_FAST", "claude-opus-5"),
+    "fast_effort": os.environ.get("CT_EFFORT_FAST", "low"),
     "full":     os.environ.get("CT_MODEL_FULL", "claude-opus-5"),
     "effort":   os.environ.get("CT_EFFORT", "xhigh"),
     "mode":     os.environ.get("CT_MODE", "full"),
@@ -162,14 +163,30 @@ def cursor_from_tool(name, inp):
 
 def ask_fast(prompt):
     HISTORY.append({"role": "user", "content": prompt})
-    del HISTORY[:-20]
+    # Keep an ODD-length tail: the list always ends on this user turn, so 19 entries
+    # start on a user turn too. The old 20-entry window started on an assistant turn
+    # once the chat passed ten exchanges, which the API rejects.
+    del HISTORY[:-19]
     try:
-        r = anth.messages.create(model=CFG["fast"], max_tokens=400, system=SYSTEM, messages=HISTORY)
-        text = "".join(b.text for b in r.content if hasattr(b, "text")).strip()
+        # Opus 5 thinks by default; low effort keeps the bar quick. The old 400-token
+        # cap was sized for Haiku and would cut replies off once thinking is counted.
+        r = anth.beta.messages.create(
+            model=CFG["fast"], max_tokens=16000, system=SYSTEM, messages=HISTORY,
+            output_config={"effort": CFG["fast_effort"]},
+            # Server-side refusal fallback. The installed SDK (0.99) predates the
+            # `fallbacks` keyword, so it travels in the request body.
+            betas=["server-side-fallback-2026-07-01"],
+            extra_body={"fallbacks": "default"},
+        )
     except Exception as e:
         HISTORY.pop()
         return f"API err: {e}"[:400]
-    HISTORY.append({"role": "assistant", "content": text})
+    if r.stop_reason == "refusal":
+        HISTORY.pop()
+        return "(declined - try rephrasing)"
+    text = "".join(b.text for b in r.content if b.type == "text").strip()
+    # Pass the full content back (thinking blocks included), not just the text.
+    HISTORY.append({"role": "assistant", "content": r.content})
     return text or "(empty)"
 
 
@@ -310,12 +327,13 @@ def slash(text):
     if cmd == "/reset":
         HISTORY.clear(); return ("answer", "history cleared")
     if cmd == "/status":
-        return ("answer", f"mode={CFG['mode']} model={CFG[CFG['mode']]} effort={CFG['effort']} "
+        return ("answer", f"mode={CFG['mode']} model={CFG[CFG['mode']]} effort={CFG['fast_effort'] if CFG['mode'] == 'fast' else CFG['effort']} "
                           f"cwd={CFG['cwd']} hist={len(HISTORY)} map={'yes' if _TM else 'MISSING'}")
     if cmd == "/effort":
+        key = "fast_effort" if CFG["mode"] == "fast" else "effort"
         if rest in ("low", "medium", "high", "xhigh", "max"):
-            CFG["effort"] = rest; return ("answer", f"effort -> {rest}")
-        return ("answer", f"effort={CFG['effort']} (low|medium|high|xhigh|max)")
+            CFG[key] = rest; return ("answer", f"{CFG['mode']} effort -> {rest}")
+        return ("answer", f"{CFG['mode']} effort={CFG[key]} (low|medium|high|xhigh|max)")
     if cmd == "/model":
         if rest: CFG[CFG["mode"]] = rest; return ("answer", f"{CFG['mode']} model -> {rest}")
         return ("answer", f"fast={CFG['fast']}  full={CFG['full']}")

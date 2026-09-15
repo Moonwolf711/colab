@@ -35,7 +35,7 @@ patcher = {
                      "text": "live.thisdevice"}},
             {"box": {"id": "obj-comment", "maxclass": "comment", "numinlets": 1, "numoutlets": 0,
                      "patching_rect": [20.0, 60.0, 540.0, 22.0],
-                     "text": "ClaudeBar — jweb UI talks via socket.io to 127.0.0.1:3939/hub"}},
+                     "text": "ClaudeBar — jweb UI talks via socket.io to 127.0.0.1:3990/hub"}},
             {"box": {
                 "id": "obj-web", "maxclass": "jweb",
                 "numinlets": 1, "numoutlets": 1, "outlettype": [""],

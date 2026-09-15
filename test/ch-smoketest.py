@@ -55,7 +55,7 @@ def wait_for_out(timeout):
 
 
 try:
-    c.connect("http://127.0.0.1:3939", namespaces=["/hub"], transports=["websocket"], wait_timeout=6)
+    c.connect("http://127.0.0.1:3990", namespaces=["/hub"], transports=["websocket"], wait_timeout=6)
     time.sleep(1.0)
     if PING:
         send("Reply with exactly one word: pong")
