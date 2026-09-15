@@ -4,7 +4,7 @@ Indices shift; the NAMES below are fixed. Confirm with get_track_info by name be
 ## Structure (groups nest, top→bottom in Session view)
 PRE MASTER [group; post: Utility]
   DRUMS [group; post: Saturator preset "DONT YOU DARE"]
-    Drum Kit Full (MIDI) — Drum Rack "Lycra Kit". Pads by MIDI note: 92 Kick Lycra · 91 Clap Wood Block · 90 Snare Lycra · 89 Clap Lycra · 88 Snare Reverb · 87 Tom Mid Analog 1 · 86 Hihat Closed Thin Machine · 85 Tom Mid Analog 2 · 84 Shaker Noise 3 · 83 Tom 909 Hi 2 · 82 Hihat Open Low Machine · 81 Tom 909 Mid 3 · 80/79 Synth Bass DCO 1 · 78 Synth Bass Distort · 77 Synth Bass Sub F. Rack FX return: Auto Filter → Utility → Saturator → Compressor → EQ Three → Ping Pong Delay → Squash → Limiter. Post: "lycan that B$TCH".
+    Drum Kit Full (MIDI) — Drum Rack "Lycra Kit". Pads by MIDI note (GM layout, read back from Live 2026-09-14; the .als ReceivingNote values are 128 minus these): 36 Kick Lycra · 37 Clap Wood Block · 38 Snare Lycra · 39 Clap Lycra · 40 Snare Reverb · 41 Tom Mid Analog 1 · 42 Hihat Closed Thin Machine · 43 Tom Mid Analog 2 · 44 Shaker Noise 3 · 45 Tom 909 Hi 2 · 46 Hihat Open Low Machine · 47 Tom 909 Mid 3 · 48/49 Synth Bass DCO 1 · 50 Synth Bass Distort · 51 Synth Bass Sub F. Notes outside 36-51 are silent. Rack FX return: Auto Filter → Utility → Saturator → Compressor → EQ Three → Ping Pong Delay → Squash → Limiter. Post: "lycan that B$TCH".
     KICK (MIDI) — Sampler "XLNT-Cartel V2 - Kick 08", trigger C3 (note 60). Post: "lycan that B$TCH".
     REVERSE K (audio) — reversed kick tail lane. No devices.
     SNARE (MIDI) — Sampler "XLNT-Cartel V2 - Snare 44", trigger C3 (60). Post: "lycan that B$TCH".

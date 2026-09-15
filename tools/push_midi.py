@@ -24,12 +24,12 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import smf  # noqa: E402
 
-# GM drum note -> (template channel, note to send). Drum Kit Full pads are the "Lycra Kit" map.
-GM = {36: ("KICK", 60), 38: ("SNARE", 60), 40: ("Drum Kit Full", 88), 42: ("HH CLOSED", 60), 44: ("HH", 60), 49: ("CRASH", 60),
-      57: ("CRASH", 60), 46: ("Drum Kit Full", 82), 37: ("Drum Kit Full", 91), 39: ("Drum Kit Full", 89),
-      41: ("Drum Kit Full", 85), 43: ("Drum Kit Full", 85), 45: ("Drum Kit Full", 85), 47: ("Drum Kit Full", 87),
-      48: ("Drum Kit Full", 83), 50: ("Drum Kit Full", 83), 51: ("Drum Kit Full", 82), 69: ("Drum Kit Full", 84),
-      70: ("Drum Kit Full", 84)}
+# GM drum note -> (template channel, note to send). Drum Kit Full "Lycra Kit" pads sit on MIDI 36-51 (GM layout).
+GM = {36: ("KICK", 60), 38: ("SNARE", 60), 40: ("Drum Kit Full", 40), 42: ("HH CLOSED", 60), 44: ("HH", 60), 49: ("CRASH", 60),
+      57: ("CRASH", 60), 46: ("Drum Kit Full", 46), 37: ("Drum Kit Full", 37), 39: ("Drum Kit Full", 39),
+      41: ("Drum Kit Full", 43), 43: ("Drum Kit Full", 43), 45: ("Drum Kit Full", 43), 47: ("Drum Kit Full", 41),
+      48: ("Drum Kit Full", 45), 50: ("Drum Kit Full", 45), 51: ("Drum Kit Full", 46), 69: ("Drum Kit Full", 44),
+      70: ("Drum Kit Full", 44)}
 DRUM_LABEL = {"KICK": "kick", "SNARE": "snare", "HH CLOSED": "closed hats", "HH": "hats 2",
               "CRASH": "crash", "Drum Kit Full": "open hat/toms/clap"}
 
