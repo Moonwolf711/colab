@@ -46,6 +46,6 @@ npm test
 
 Tests use a local WebSocket fixture matching the installed V3 protocol, the real Jam interaction core, and a child server with simulated Ableton. They cover identity, coordinates, buttons/wheels, disconnect/reconnect, disposal, invalid packets, login rejection, timeout handling, and a clip launch through the complete server pipeline. They do not prove physical-device behavior in an active Ableton session.
 
-This feature runs on the Windows machine hosting MouseMux/Ableton; it has no database migration or Railway deployment. GitHub's existing master-branch CI runs `npm ci` and `npm test`. Starting the local server installs the runtime into the current session; stop it with Ctrl+C. No service is installed.
+This feature runs on the Windows machine hosting MouseMux/Ableton; it has no database migration or Railway deployment. GitHub's existing master-branch CI runs `npm ci` and `npm test`. Starting the local server launches the runtime in the current session; stop it with Ctrl+C. No service is installed.
 
 At implementation time the MouseMux application was running but its Web SDK had no listener on port 41001. Physical multi-mouse/Ableton verification remains pending enabling the SDK and calibrating the panel.

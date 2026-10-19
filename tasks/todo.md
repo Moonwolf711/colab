@@ -2,17 +2,21 @@
 
 ## MouseMux integration — 2026-10-19
 
-Assumption pending user clarification: add independent MouseMux user input to CoLaB's existing multi-cursor path. Preserve the consolidation work below and unrelated workspace changes.
+Scope: add independent MouseMux user input to CoLaB's existing multi-cursor path, including the pointer features consumed by its Jam interface. Preserve the consolidation work below and unrelated workspace changes. Keyboard forwarding, screen sharing, and native desktop virtualization remain MouseMux capabilities rather than implemented CoLaB Jam features.
 
-- [ ] Run the installed REA tooling against the nine supplied 3.0.19 x86 DLLs; record hashes, public interfaces, and evidence-backed limitations.
+- [x] Run the installed REA tooling against the nine supplied 3.0.19 x86 DLLs; record hashes, public interfaces, and evidence-backed limitations.
 - [x] Verify the V3 input contract and select the smallest compatible integration with CoLaB's existing mouse pipeline.
 - [x] Implement original integration code and usage documentation; keep vendor binaries and raw decompilation outside the repository.
 - [x] Verify input identity, motion/buttons/wheels, disconnect cleanup, and existing consumer behavior with appropriate builds/tests and a local smoke check.
-- [ ] Commit only this task's files, push to origin/master, and verify the applicable deployment or local installation status.
+- [x] Commit only this task's files, push to origin/master, and verify the applicable deployment or local installation status.
 
 Success: a reproducible MouseMux-to-CoLaB input path, tested without disturbing an active Ableton session, with exact instructions and explicit live-test limitations.
 
 Verification: 43 tests pass on the current Node runtime and Node 18; a clean detached checkout passes `npm ci --ignore-scripts` and all 43 tests. Panel inline JavaScript parses. A local 100,000-event motion benchmark averaged 1.86 microseconds/event for decoded input through the adapter and Jam core (network, rendering, and Ableton excluded). Physical-input validation remains pending: MouseMux's Web SDK is disabled/not listening on 41001, and panel calibration requires the actual canvas screen rectangle. No schema changes or Railway runtime apply to this Windows desktop feature.
+
+Delivery: implementation commits pushed to origin/master; GitHub Actions run 39312135001 passed on Node 18/20/22. Local demo at `http://127.0.0.1:9460` returns a 24-track simulated set, MouseMux disconnected/ECONNREFUSED, and input disabled. Its sample rectangle must be calibrated before live use. Brave UI verification could not run because CDP was unavailable; IP Helper was stopped according to the workspace browser instructions and Brave requires relaunch from its debug shortcut.
+
+REA final coverage: all nine overviews succeeded with zero main-batch tool errors; 31/31 selected exported-function requests succeeded, in 627.87 seconds. Raw results remain outside the repository; see `docs/mousemux-analysis.md` for hashes, counts, exact evidence boundaries, and the separate focus pass's two unsuccessful exploratory internal-address lookups.
 
 **Goal:** One `.amxd` a collaborator drops on a track → opens the `.als` → plays. **Zero install** (no Node.js, no AbletonBridge Remote Script, no AbletonOSC, no web-bridge). North star: *easy for a friend to join and play* > technical completeness.
 

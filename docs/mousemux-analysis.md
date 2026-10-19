@@ -24,9 +24,27 @@ Every requested file is PE x86, machine `0x014c`.
 
 The global REA 4.0.1 installation lacked the needed Windows x86 path. Local REA 6.3.0 and Ghidra 12.1.4 successfully analyzed `winhooks32` (158 procedures, 1791 strings) and decompiled all eight exports. PE inventory and LLVM disassembly provide independent evidence.
 
+The complete sequential REA batch finished all nine requested DLLs in 627.87 seconds, with zero tool errors and 31/31 selected exported-function requests succeeding. These are overview/procedure analyses, not a claim that every recovered function was understood or tested dynamically.
+
+| DLL | Procedures found | Strings found |
+| --- | ---: | ---: |
+| dbghelp | 4881 | 2186 |
+| exchndl | 161 | 205 |
+| mgwhelp | 729 | 1088 |
+| reloader32_v1 | 878 | 1407 |
+| reloader32_v2 | 372 | 2535 |
+| unloader32_v1 | 878 | 1407 |
+| unloader32_v2 | 372 | 2535 |
+| winhooks32 | 158 | 1791 |
+| symsrv | 669 | 430 |
+
+The local `rea-final-coverage.json` records digest-linked coverage; `rea-batch.jsonl` contains the raw responses. A separate focused pass succeeded on all eight winhooks exports; two exploratory internal-address lookups in that separate pass failed because REA had no procedure at those addresses. The main nine-file batch had no such failures. All REA sessions were closed after completion.
+
 The exports are `hook_create`, `hook_start`, `hook_stop`, `hook_flag`, `hook_ping`, `hook_pong`, `hook_range`, and `version`. A table at VA `0x1000d008` selects Windows hook IDs 14, 2, and 13. `hook_create` at `0x10001720` selects a slot; the worker reached from `hook_start` installs the hook and pumps Windows messages. Ping/stop use messages `0x8002`/`0x8001`. These are internal global-hook lifecycle operations, not a user/cursor SDK. Decompiled parameter types are inferred and are not a verified ABI.
 
 The v1 reloader/unloader pair each has 19 exports and Deviare/NktHookLib identifiers. The v2 pair each has 30 exports, MinHook identifiers, process-injection imports, named-pipe strings, and a global shared mapping name. This establishes likely hook/injection infrastructure. It does **not** establish the shared-memory layout or pipe payload contract. Names containing `64` do not change the x86 architecture of the DLL containing them.
+
+Within each v1/v2 pair, the reloader and unloader `.text` section hashes match exactly even though their full-file hashes differ. They are related infrastructure variants rather than nine distinct input engines.
 
 A 64-bit Node/Ableton process cannot directly load these x86 DLLs. Recreating the undocumented injection path would also make this integration depend on internal state that has not been recovered. CoLaB therefore consumes the supported application-level input stream.
 
