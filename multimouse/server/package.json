@@ -1,0 +1,11 @@
+{
+  "name": "multimouse-jam-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MultiMouse Jam: per-mouse cursors on an Ableton session grid, driven through AbletonBridge",
+  "scripts": {
+    "test": "node --test test/index.js test/mousemux-input.test.js test/mousemux-server.test.js",
+    "start": "node server.js",
+    "start:dry": "node server.js --dry-run"
+  }
+}

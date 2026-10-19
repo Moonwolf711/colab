@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MultiMouse Jam</title>
+<style>
+  :root {
+    --bg: #0c0d12; --bar: #14161d; --bar2: #10121a; --line: #262a36; --text: #e6e8ef; --dim: #8a90a2;
+    --ok: #34d399; --bad: #f87171; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 13px/1.3 system-ui, "Segoe UI", sans-serif; overflow: hidden; user-select: none; -webkit-user-select: none; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #bar { flex: none; height: 44px; overflow-x: auto; background: var(--bar); border-bottom: 1px solid var(--line); padding: 6px 12px; display: flex; gap: 8px 14px; align-items: center; }
+  #bar > * { flex-shrink: 0; }
+  #bar h1 { margin: 0; font-size: 14px; letter-spacing: .04em; font-weight: 650; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--bar2); color: var(--dim); white-space: nowrap; }
+  .chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .chip.ok i { background: var(--ok); } .chip.warn i { background: var(--warn); }
+  .chip.ok { color: var(--text); } .chip.warn { color: var(--text); }
+  button { font: inherit; color: var(--text); background: #1d2030; border: 1px solid #343a4f; border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  button:hover { background: #262b40; }
+  #devices { display: flex; gap: 6px; margin-left: auto; }
+  .dev { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bar2); max-width: 260px; }
+  .dev b { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .dev span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+  .dev.off span { text-decoration: line-through; opacity: .6; }
+  .dev input { margin: 0; accent-color: #a78bfa; }
+  #hint { flex: none; background: #151225; border-bottom: 1px solid #2b2550; color: #cfc6ff; text-align: center;
+    height: 42px; overflow: hidden; white-space: nowrap; padding: 7px 12px; font-size: 18px; font-weight: 650; letter-spacing: .02em; }
+  #hint kbd { font: inherit; background: #2a2450; border: 1px solid #4a3f8a; border-radius: 6px; padding: 1px 8px; color: #fff; }
+  #hint.on { background: #10261e; border-bottom-color: #1f5a43; color: #9ff0cd; }
+  #hint.on kbd { background: #14402f; border-color: #2e7d5b; }
+  #hint small { font-size: 12px; font-weight: 500; color: var(--dim); margin-left: 12px; }
+  #stage { flex: 1 1 auto; position: relative; min-height: 0; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: none; }
+  #log { position: absolute; right: 10px; bottom: 8px; font: 11px ui-monospace, Consolas, monospace; color: var(--dim); text-align: right; pointer-events: none; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <h1>MULTIMOUSE JAM</h1>
+    <span class="chip" id="cAbl"><i></i><span>Ableton</span></span>
+    <span class="chip" id="cRaw"><i></i><span>rawmouse</span></span>
+    <span class="chip" id="cJam"><i></i><span>jam mode</span></span>
+    <button id="btnJam" title="Same as the hotkey. Needs rawmouse running.">Toggle jam</button>
+    <span class="chip" id="cMode"><span>mode</span></span>
+    <div id="devices"></div>
+  </div>
+  <div id="hint"><kbd>Ctrl+Alt+J</kbd> = lock both mice into this window<small id="hintSub"></small></div>
+  <div id="stage"><canvas id="cv"></canvas><div id="log"></div></div>
+</div>
+<script>
+'use strict';
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var cv = $('cv'), ctx = cv.getContext('2d');
+  var st = null;            // latest server state
+  var ws = null, wsOpen = false;
+  var lastVp = '';
+
+  // Hidden devices are remembered by device name (idx can change between runs).
+  var hiddenNames = {};
+  try { hiddenNames = JSON.parse(localStorage.getItem('mmj.hidden') || '{}') || {}; } catch (e) { hiddenNames = {}; }
+  function saveHidden() { try { localStorage.setItem('mmj.hidden', JSON.stringify(hiddenNames)); } catch (e) { /* storage unavailable */ } }
+
+  // The OS mouse never drives the canvas: kill right-click menu, wheel scroll, drags.
+  ['contextmenu', 'wheel', 'dragstart', 'selectstart'].forEach(function (n) {
+    cv.addEventListener(n, function (e) { e.preventDefault(); }, { passive: false });
+  });
+
+  function send(o) { if (wsOpen) ws.send(JSON.stringify(o)); }
+
+  function connect() {
+    ws = new WebSocket('ws://' + location.host + '/ws');
+    ws.onopen = function () { wsOpen = true; lastVp = ''; reportViewport(); };
+    ws.onclose = function () { wsOpen = false; st = null; setTimeout(connect, 800); };
+    ws.onerror = function () { try { ws.close(); } catch (e) { /* closing */ } };
+    ws.onmessage = function (m) {
+      try { st = JSON.parse(m.data); } catch (e) { return; }
+      syncHidden();
+      updateBar();
+    };
+  }
+
+  function reportViewport() {
+    var r = cv.getBoundingClientRect();
+    var w = Math.floor(r.width), h = Math.floor(r.height);
+    var dpr = window.devicePixelRatio || 1;
+    cv.width = Math.max(1, Math.round(w * dpr)); cv.height = Math.max(1, Math.round(h * dpr));
+    var key = w + 'x' + h;
+    if (key !== lastVp) { if (lastVp) pauseInput(); lastVp = key; send({ t: 'viewport', w: w, h: h }); }
+  }
+  window.addEventListener('resize', reportViewport);
+  function pauseInput() { send({ t: 'input-pause' }); }
+  window.addEventListener('blur', pauseInput);
+  window.addEventListener('resize', pauseInput);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) pauseInput(); });
+  new ResizeObserver(reportViewport).observe(cv);
+  // A window move or monitor/DPI change need not fire resize; invalidate the physical-pixel mapping.
+  var screenGeometry = '';
+  setInterval(function () {
+    var bounds = cv.getBoundingClientRect();
+    var next = [window.screenX, window.screenY, window.outerWidth, window.outerHeight,
+      window.devicePixelRatio, bounds.x, bounds.y, bounds.width, bounds.height].join(',');
+    if (screenGeometry && next !== screenGeometry) pauseInput();
+    screenGeometry = next;
+  }, 200);
+
+  // ---- status bar (DOM; this part is operated with the normal OS mouse)
+  function chip(id, cls, text) { var e = $(id); e.className = 'chip ' + cls; e.lastElementChild.textContent = text; }
+
+  function syncHidden() {
+    if (!st) return;
+    st.devices.forEach(function (d) {
+      var want = !!hiddenNames[d.name];
+      if (want !== d.hidden) send({ t: 'hide', idx: d.idx, hidden: want });
+    });
+  }
+
+  var devKey = '';
+  function updateBar() {
+    var a = st.status.ableton, r = st.status.rawmouse, mm = st.status.mousemux;
+    var ablText = a.fake ? 'Ableton: offline (fake set)' : a.connected ? 'Ableton via ' + (a.transport === 'osc' ? 'OSC' : 'bridge') + (a.mode === 'dry-run' ? ' (dry-run)' : '') : 'Ableton not connected';
+    if (!a.fake && a.transport !== 'osc' && a.note) ablText += ' - ' + a.note;
+    chip('cAbl', a.fake || (a.connected && a.transport === 'bridge') ? 'warn' : a.connected ? 'ok' : '', ablText);
+    $('cAbl').title = a.error || '';
+    chip('cRaw', mm ? (mm.connected ? 'ok' : '') : (r.seen ? 'ok' : ''), mm ? (mm.connected ? 'MouseMux connected' : 'MouseMux disconnected') : (r.seen ? 'rawmouse running (pid ' + r.pid + ')' : 'rawmouse heartbeat missing'));
+    $('cRaw').title = mm ? mm.error || '' : '';
+    $('btnJam').textContent = mm ? (st.status.jam ? 'Pause input' : 'Enable input') : 'Toggle jam';
+    $('btnJam').title = mm ? 'Enable MouseMux input within the configured canvas rectangle' : 'Same as the hotkey. Needs rawmouse running.';
+    $('btnJam').disabled = !!(mm && !mm.connected);
+    chip('cJam', st.status.jam ? 'ok' : '', st.status.jam ? 'jam mode ON' : 'jam mode off');
+    $('cMode').lastElementChild.textContent = 'mode: ' + a.mode;
+    var hint = $('hint');
+    hint.className = st.status.jam ? 'on' : '';
+    if (mm) {
+      hint.firstChild.textContent = st.status.jam ? 'MouseMux input enabled' : 'MouseMux input paused';
+      if (hint.childNodes[1] && hint.childNodes[1].nodeType === 3) hint.childNodes[1].textContent = '';
+      $('hintSub').textContent = mm.error || (st.status.jam ? 'Each user controls their own cursor. Leaving the panel pauses input.' : 'Check the canvas rectangle, then enable input. Moving or resizing requires updating the rectangle.');
+    } else {
+      $('hintSub').textContent = st.status.jam ? 'JAM ON. Mice are locked here. Press it again to release.' : (r.seen ? 'then use each mouse on its own' : 'start rawmouse.exe first');
+    }
+    var key = JSON.stringify(st.devices);
+    if (key !== devKey) {
+      devKey = key;
+      var box = $('devices'); box.textContent = '';
+      st.devices.forEach(function (d) {
+        var lab = document.createElement('label');
+        lab.className = 'dev' + (d.hidden ? ' off' : '');
+        lab.title = 'P' + d.idx + '  ' + d.name + '\nA cursor appears when this interface first moves. Untick to ignore it (e.g. MouseMux virtual devices).';
+        var sw = document.createElement('b'); sw.style.background = d.color || '#3a3f52';
+        var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !d.hidden;
+        cb.onchange = function () {
+          if (cb.checked) delete hiddenNames[d.name]; else hiddenNames[d.name] = 1;
+          saveHidden(); send({ t: 'hide', idx: d.idx, hidden: !cb.checked });
+        };
+        var tx = document.createElement('span'); tx.textContent = mm ? d.short : (d.active ? 'P' + d.idx : '#' + d.idx) + ' ' + d.short;
+        lab.appendChild(sw); lab.appendChild(cb); lab.appendChild(tx); box.appendChild(lab);
+      });
+    }
+    $('log').textContent = (st.log || []).map(function (c) {
+      return 'P' + c.player + ' ' + c.cmd + ' ' + JSON.stringify(c.params) + (c.udp && !c.final ? ' udp' : '') + '  [' + c.outcome + ']';
+    }).join('\n');
+  }
+  $('btnJam').onclick = function () { send({ t: 'jam', on: !(st && st.status.jam) }); };
+
+  // ---- canvas drawing
+  function rr(x, y, w, h, r) {
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+  function hexA(hex, a) {
+    var n = parseInt(hex.slice(1), 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+  }
+  function text(s, x, y, color, size, weight, align) {
+    ctx.fillStyle = color; ctx.font = (weight || 500) + ' ' + size + 'px system-ui, "Segoe UI", sans-serif';
+    ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y);
+  }
+  function clipText(s, maxW, size, weight) {
+    ctx.font = (weight || 500) + ' ' + size + 'px system-ui, "Segoe UI", sans-serif';
+    if (ctx.measureText(s).width <= maxW) return s;
+    while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1);
+    return s + '…';
+  }
+
+  function colRect(t) { for (var i = 0; i < st.tracks.length; i++) if (st.tracks[i].t === t) return st.tracks[i]; return null; }
+  function rowRect(s) { for (var i = 0; i < st.layout.rows.length; i++) if (st.layout.rows[i].s === s) return st.layout.rows[i]; return null; }
+  function cellRect(t, s) {
+    var c = colRect(t), r = rowRect(s);
+    return c && r ? { x: c.x, y: r.y, w: c.w, h: r.h } : null;
+  }
+
+  function draw(ts) {
+    requestAnimationFrame(draw);
+    var dpr = window.devicePixelRatio || 1;
+    var W = cv.width / dpr, H = cv.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#0c0d12'; ctx.fillRect(0, 0, W, H);
+    if (!st) { text('Connecting to the jam server…', W / 2, H / 2, '#8a90a2', 18, 500, 'center'); return; }
+    var L = st.layout, pulse = 0.5 + 0.5 * Math.sin(ts / 220);
+    if (!st.status.session.ready) text(st.status.ableton.fake || st.status.ableton.connected ? 'Reading the Ableton set…' : 'Waiting for AbletonBridge (127.0.0.1:9877)…', W / 2, 24, '#fbbf24', 15, 600, 'center');
+
+    // track headers
+    st.tracks.forEach(function (t) {
+      var col = t.color || '#5b6075';
+      rr(t.x + 2, 4, t.w - 4, L.headerH - 8, 6); ctx.fillStyle = '#171a24'; ctx.fill();
+      ctx.fillStyle = col; rr(t.x + 2, 4, t.w - 4, 6, 3); ctx.fill();
+      text(clipText(t.name, t.w - 16, 12, 600), t.x + 9, 30, t.mute ? '#6b7080' : '#e6e8ef', 12, 600);
+      if (t.group) text('GROUP', t.x + t.w - 8, 18, '#8a90a2', 9, 600, 'right');
+    });
+    // scene launch column
+    L.rows.forEach(function (r) {
+      rr(4, r.y + 2, L.sceneW - 8, r.h - 4, 6); ctx.fillStyle = '#171a24'; ctx.fill();
+      text('▶', 16, r.y + r.h / 2, '#9aa0b4', 11, 700, 'center');
+      text(clipText(r.name || 'Scene ' + (r.s + 1), L.sceneW - 40, 11, 500), 28, r.y + r.h / 2, '#c7cbd8', 11, 500);
+    });
+    // clip slots
+    st.cells.forEach(function (c) {
+      var rc = cellRect(c.t, c.s); if (!rc) return;
+      var tr = colRect(c.t), col = (tr && tr.color) || '#5b6075';
+      rr(rc.x + 2, rc.y + 2, rc.w - 4, rc.h - 4, 5);
+      if (c.has) {
+        ctx.fillStyle = hexA(col, c.st === 'playing' ? 0.95 : 0.55); ctx.fill();
+        if (c.st === 'triggered') { ctx.lineWidth = 2; ctx.strokeStyle = hexA('#ffffff', 0.35 + 0.5 * pulse); ctx.stroke(); }
+        text(c.st === 'playing' ? '▶' : '▶', rc.x + 13, rc.y + rc.h / 2, c.st === 'playing' ? '#0c0d12' : hexA('#0c0d12', 0.55), 10, 700, 'center');
+        text(clipText(c.name, rc.w - 34, 11, 600), rc.x + 24, rc.y + rc.h / 2, c.st === 'playing' ? '#0c0d12' : '#10121a', 11, 600);
+      } else {
+        ctx.fillStyle = '#14161e'; ctx.fill();
+        ctx.beginPath(); ctx.arc(rc.x + rc.w / 2, rc.y + rc.h / 2, 2, 0, 6.3); ctx.fillStyle = '#2a2e3d'; ctx.fill();
+      }
+    });
+    // stop row
+    st.tracks.forEach(function (t) {
+      rr(t.x + 2, L.stop.y + 3, t.w - 4, L.stop.h - 6, 5); ctx.fillStyle = '#151822'; ctx.fill();
+      ctx.fillStyle = '#7a8096'; ctx.fillRect(t.x + t.w / 2 - 5, L.stop.y + L.stop.h / 2 - 5, 10, 10);
+    });
+    // mixer faders
+    ctx.fillStyle = '#10121a'; ctx.fillRect(0, L.mixer.y, W, H - L.mixer.y);
+    ctx.fillStyle = '#262a36'; ctx.fillRect(0, L.mixer.y, W, 1);
+    text('MIXER', 12, L.mixer.y + 16, '#5d6377', 10, 700);
+    L.faders.forEach(function (f) {
+      var tr = colRect(f.t) || {}, v = tr.volume == null ? 0 : tr.volume, col = tr.color || '#5b6075';
+      rr(f.cx - 3, f.y0, 6, f.y1 - f.y0, 3); ctx.fillStyle = '#1d2030'; ctx.fill();
+      var hy = f.y1 - v * (f.y1 - f.y0);
+      rr(f.cx - 3, hy, 6, f.y1 - hy, 3); ctx.fillStyle = hexA(col, 0.9); ctx.fill();
+      rr(f.cx - 15, hy - 6, 30, 12, 4); ctx.fillStyle = '#e6e8ef'; ctx.fill();
+      ctx.fillStyle = '#0c0d12'; ctx.fillRect(f.cx - 9, hy - 0.5, 18, 1);
+      text(tr.volume == null ? '--' : String(Math.round(v * 100)), f.cx, f.y1 + 14, '#9aa0b4', 11, 600, 'center');
+      text(clipText(tr.name || '', f.w - 12, 10, 500), f.cx, f.y1 + 27, '#5d6377', 10, 500, 'center');
+    });
+    // flashes
+    st.flashes.forEach(function (f) {
+      var a = Math.max(0, Math.min(1, f.left / 450)), rc = null;
+      if (f.type === 'slot') rc = cellRect(f.t, f.s);
+      else if (f.type === 'scene') { var r = rowRect(f.s); rc = r ? { x: 0, y: r.y, w: L.sceneW, h: r.h } : null; }
+      else if (f.type === 'header') { var c = colRect(f.t); rc = c ? { x: c.x, y: 0, w: c.w, h: L.headerH } : null; }
+      else if (f.type === 'stop') { var c2 = colRect(f.t); rc = c2 ? { x: c2.x, y: L.stop.y, w: c2.w, h: L.stop.h } : null; }
+      if (!rc) return;
+      rr(rc.x + 2, rc.y + 2, rc.w - 4, rc.h - 4, 5); ctx.fillStyle = hexA(f.color, 0.55 * a); ctx.fill();
+    });
+    // per-player selection tint + hover outline
+    st.players.forEach(function (p) {
+      if (p.sel) {
+        var tl = cellRect(Math.max(p.sel.t0, st.tracks.length ? st.tracks[0].t : 0), Math.max(p.sel.s0, L.rows.length ? L.rows[0].s : 0));
+        var lastT = st.tracks.length ? st.tracks[st.tracks.length - 1].t : -1, lastS = L.rows.length ? L.rows[L.rows.length - 1].s : -1;
+        var br = cellRect(Math.min(p.sel.t1, lastT), Math.min(p.sel.s1, lastS));
+        if (tl && br) {
+          var x = tl.x + 1, y = tl.y + 1, w = br.x + br.w - tl.x - 2, h = br.y + br.h - tl.y - 2;
+          ctx.fillStyle = hexA(p.color, p.band ? 0.26 : 0.2); ctx.fillRect(x, y, w, h);
+          ctx.lineWidth = 2; ctx.strokeStyle = hexA(p.color, 0.95);
+          ctx.setLineDash(p.band ? [6, 4] : []); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
+        }
+      }
+      var h = p.hover, hr = null;
+      if (h && !p.menu) {
+        if (h.type === 'slot') hr = cellRect(h.t, h.s);
+        else if (h.type === 'scene') { var rr1 = rowRect(h.s); hr = rr1 ? { x: 0, y: rr1.y, w: L.sceneW, h: rr1.h } : null; }
+        else if (h.type === 'header') { var c3 = colRect(h.t); hr = c3 ? { x: c3.x, y: 0, w: c3.w, h: L.headerH } : null; }
+        else if (h.type === 'stop') { var c4 = colRect(h.t); hr = c4 ? { x: c4.x, y: L.stop.y, w: c4.w, h: L.stop.h } : null; }
+        else if (h.type === 'fader') { var c5 = colRect(h.t); hr = c5 ? { x: c5.x, y: L.mixer.y, w: c5.w, h: H - L.mixer.y } : null; }
+      }
+      if (hr) { rr(hr.x + 2, hr.y + 2, hr.w - 4, hr.h - 4, 5); ctx.lineWidth = 2; ctx.strokeStyle = hexA(p.color, 0.9); ctx.stroke(); }
+    });
+    // context menus (one per player, own colour)
+    st.players.forEach(function (p) {
+      var m = p.menu; if (!m) return;
+      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+      rr(m.x, m.y, m.w, m.h, 8); ctx.fillStyle = '#1a1d28'; ctx.fill(); ctx.restore();
+      rr(m.x + .5, m.y + .5, m.w - 1, m.h - 1, 8); ctx.lineWidth = 1.5; ctx.strokeStyle = p.color; ctx.stroke();
+      m.items.forEach(function (it) {
+        var hot = m.hot && m.hot.id === it.id;
+        if (it.id === 'head') { text((st.status.mousemux ? p.name : 'P' + p.idx) + '   ' + it.label, m.x + 12, it.y + it.h / 2, p.color, 11, 700); return; }
+        if (it.swatches) {
+          if (hot && m.hot.swatch < 0) { ctx.fillStyle = hexA(p.color, 0.1); ctx.fillRect(m.x + 3, it.y, m.w - 6, it.h); }
+          text('Color', m.x + 12, it.y + 9, '#c7cbd8', 11, 500);
+          it.swatches.forEach(function (_, i) {
+            var sx = m.x + 10 + i * 26, sy = it.y + 14;
+            rr(sx, sy, 22, 16, 4); ctx.fillStyle = it.swatchColors[i]; ctx.fill();
+            if (hot && m.hot.swatch === i) { ctx.lineWidth = 2; ctx.strokeStyle = '#fff'; ctx.stroke(); }
+          });
+          return;
+        }
+        if (hot) { rr(m.x + 4, it.y + 1, m.w - 8, it.h - 2, 5); ctx.fillStyle = hexA(p.color, 0.3); ctx.fill(); }
+        text(it.label, m.x + 14, it.y + it.h / 2, it.id === 'delete' ? '#f87171' : '#e6e8ef', 13, 500);
+      });
+    });
+    // cursors + labels on top
+    st.players.forEach(function (p) {
+      ctx.save(); ctx.translate(p.x, p.y);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 17); ctx.lineTo(4.5, 13); ctx.lineTo(7.5, 20); ctx.lineTo(10.5, 18.6); ctx.lineTo(7.6, 12); ctx.lineTo(12.5, 12); ctx.closePath();
+      ctx.fillStyle = p.color; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = '#0a0a0e'; ctx.stroke();
+      if (p.down.L) { ctx.beginPath(); ctx.arc(0, 0, 11, 0, 6.3); ctx.lineWidth = 2; ctx.strokeStyle = hexA(p.color, 0.8); ctx.stroke(); }
+      if (!p.menu) { // the open menu already carries the P label in its header
+        var lab = st.status.mousemux ? p.name : 'P' + p.idx; ctx.font = '700 11px system-ui, sans-serif';
+        var tw = ctx.measureText(lab).width + 12;
+        rr(14, 20, tw, 16, 8); ctx.fillStyle = p.color; ctx.fill();
+        text(lab, 20, 28.5, '#0a0a0e', 11, 700);
+      }
+      ctx.restore();
+    });
+    // scroll footer
+    if (st.status.session.ready && st.tracks.length)
+      text('tracks ' + (st.tracks[0].t + 1) + '-' + (st.tracks[st.tracks.length - 1].t + 1) + ' of ' + L.totalTracks + '   scenes ' +
+        (L.rows.length ? L.rows[0].s + 1 : 0) + '-' + (L.rows.length ? L.rows[L.rows.length - 1].s + 1 : 0) + ' of ' + L.totalScenes + '   wheel: scenes   tilt: tracks',
+        12, H - 8, '#5d6377', 10, 500);
+  }
+
+  connect();
+  reportViewport();
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

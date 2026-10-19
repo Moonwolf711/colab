@@ -14,6 +14,9 @@
     "yjs": "^13.6.0"
   },
   "scripts": {
-    "bundle": "node scripts/bundle.js"
+    "bundle": "node scripts/bundle.js",
+    "test": "node --test multimouse/server/test/index.js multimouse/server/test/mousemux-input.test.js multimouse/server/test/mousemux-server.test.js",
+    "multimouse": "node multimouse/server/server.js",
+    "multimouse:demo": "node multimouse/server/server.js --no-ableton"
   }
 }
