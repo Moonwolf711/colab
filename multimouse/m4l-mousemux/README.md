@@ -20,6 +20,9 @@ See the [MouseMux manual](https://www.mousemux.com/pages/manual/),
 [Song.View](https://docs.cycling74.com/apiref/lom/song_view/), and
 [Application.View](https://docs.cycling74.com/apiref/lom/application_view/).
 The independent-interaction feature remains incomplete.
+The separate [native runtime investigation](RUNTIME-MENUS.md) records the
+Extensions SDK, menu-instancing references, and observed popup lifecycle; the
+supported API limitation is not a claim that runtime integration is impossible.
 
 The device uses Max 9 `v8` for Live integration, initialized by
 `live.thisdevice`, and `node.script` to manage the Rust process. MIDI passes

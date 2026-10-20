@@ -9,6 +9,10 @@ condition is required; a connected SDK or two visible cursors is not completion.
 
 - [x] Record the exact requirement and a physical same-window context-menu test.
 - [x] Verify available MouseMux and Live mechanisms against native per-user interaction state.
+- [x] Inspect the Live 12.4.5 Beta Extensions SDK and the user's runtime-menu lead.
+- [x] Observe native popup creation, window ownership, and lifetime in Live.
+- [x] Run a bounded exact-build menu diagnostic and record its actual coverage.
+- [ ] Verify native command-target binding and a safe per-user lifetime/control integration point.
 - [ ] Implement a mechanism that satisfies the entire requirement, if available.
 - [ ] Pass concurrent context menus, selections, edits, highlighting, clicks, and held gestures in both user directions.
 - [ ] Deliver the verified behavior without weakening any acceptance condition.
@@ -27,6 +31,26 @@ selection/focus with no per-user native interaction context. No supported
 mechanism satisfying the complete requirement was found. Implementation and
 acceptance remain incomplete; the failure is documented prominently in the
 device README. Do not label the current controller a solution to this feature.
+
+Runtime investigation reopened after the user's menu-instancing reference:
+absence of a per-user Live Object Model API does not rule out native runtime
+integration. Installed Suite is 12.3.8; installed Beta is 12.4.5b5 and qualifies
+for Ableton's newer Extensions SDK. Verify that SDK and the observed native
+popup lifecycle before concluding what can be instantiated independently.
+Separate menu instances must preserve user identity, target object, command
+dispatch, selection, focus, and held input; separate windows alone are not proof.
+The read-only 60-second capture observed distinct Live-owned popup HWNDs on the
+same UI thread, with earlier popups hidden or destroyed. The local SDK example
+proves captured-target handles; it does not expose popup cloning. Findings and
+remaining native-runtime proof are in `multimouse/m4l-mousemux/RUNTIME-MENUS.md`.
+The 60-second instrumented diagnostic loaded and detached cleanly but observed
+zero entries to the three candidate functions; physical actions during that
+interval were not confirmed. This does not validate a native hook or per-user
+ownership. Live remained responsive on the same stopped disposable set.
+The investigation notes are included in the package and installed User Library.
+All 79 installed files match the rebuilt package; only the README, investigation
+notes, and checksum manifest changed there. Eight device tests and the package
+build/AMXD validation pass. These checks do not change the failed acceptance.
 
 ## Reusable Max for Live agent skill — 2026-10-20
 

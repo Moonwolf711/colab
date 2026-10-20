@@ -32,6 +32,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $packageRoot 'bin') | Out-N
 Copy-Item -LiteralPath (Join-Path $projectRoot 'bridge\target\release\mousemux-live-bridge.exe') -Destination (Join-Path $packageRoot 'bin\mousemux-live-bridge.exe')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'README.md') -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot 'PROTOCOL.md') -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot 'RUNTIME-MENUS.md') -Destination $packageRoot
 
 $metadataText = & cargo metadata --manifest-path $manifestPath --locked --format-version 1
 if ($LASTEXITCODE -ne 0) { throw 'Dependency metadata failed.' }

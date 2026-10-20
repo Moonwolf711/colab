@@ -6,6 +6,8 @@
 
 ## User corrections
 
+- 2026-10-20, native menu runtime lead: distinguish the public Live Object Model from newer Extensions SDK and native runtime mechanisms. Missing per-user LOM properties establish that API's limit, not general impossibility. Inspect the user's cited menu-spawning approach and actual Beta version. Likewise, adding a menu item or duplicating a popup does not prove independent command targets, selection, capture, or focus.
+
 - 2026-10-20, strict MouseMux acceptance: the required outcome is simultaneous independent native Ableton interaction, including two right-click menus, selections, highlighting, editing, clicks, and held gestures in one instance. SDK authentication, two cursors, and mode readback do not establish this. The user's physical test failed because one menu closed or took over. Keep the feature explicitly incomplete; never substitute a controller, custom editor, sequential input, or separate Live instances for this requirement.
 
 - 2026-10-20, M4L host validation: passing package and SDK tests did not catch `live.text` button bangs being swallowed by `sel 1`, a duplicated `v8ui` painter drawing stale state, or Max resolving a newer `node.script` through a global installation-root search path. Load the actual AMXD in Live, inspect its panel and log, and compare native external imports to the running Max runtime before changing application code.
