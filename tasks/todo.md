@@ -40,7 +40,7 @@ the installed edition and application compatibility. No synthetic cursor engine.
 - [x] Build native Max controls, lifecycle manager, v8 LiveAPI initialization, and valid AMXD package.
 - [x] Test bridge/protocol/lifecycle, build Windows release, and validate device in a disposable Live set.
 - [x] Install complete device package into the configured Live User Library; record physical-test limits.
-- [ ] Commit only scoped changes, push origin/master, and verify CI/local deployment status.
+- [x] Commit only scoped changes, push origin/master, and verify CI/local deployment status.
 
 Resumed using `max-for-live-amxd`: review the existing bridge and native panel
 in parallel; repair verified mode-confirmation, button-routing, and packaging
@@ -66,6 +66,13 @@ search path from the shared Max 9 settings; corrected duplicate panel painter
 state; packaged a local CommonJS boundary for the actual User Library location.
 Physical two-mouse interaction, MIDI playback, and Live Set save/reopen remain
 unverified. The final host check found no Web SDK listener on port 41001.
+
+Delivery: implementation commit `4fa619d` is on origin/master. Windows package
+CI run `39393614682` passed all checks and uploaded the ZIP; Node 18/20/22 CI run
+`39393614262` passed. The final installed package contains 78 hash-verified files.
+The release executable reports an unavailable SDK clearly and exits with code 0
+on stop/EOF; this smoke check sent no mode commands. The reusable skill's updated
+packaging/runtime lessons are installed and hash-verified too.
 
 Work lives in `multimouse/m4l-mousemux/`. Vendor runtime remains user-installed;
 do not redistribute vendor binaries, license data, or decompiled source.
