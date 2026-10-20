@@ -1,5 +1,33 @@
 # CoLaB Consolidation — Target (b): Single Self-Contained M4L Device
 
+## Independent native Live interaction — strict acceptance, 2026-10-20
+
+Both physical cursors must independently right-click, select, edit, highlight,
+and click simultaneously in the same Ableton Live instance. Neither may dismiss
+the other's menu, steal its selection/focus, or interrupt its gesture. Every
+condition is required; a connected SDK or two visible cursors is not completion.
+
+- [x] Record the exact requirement and a physical same-window context-menu test.
+- [x] Verify available MouseMux and Live mechanisms against native per-user interaction state.
+- [ ] Implement a mechanism that satisfies the entire requirement, if available.
+- [ ] Pass concurrent context menus, selections, edits, highlighting, clicks, and held gestures in both user directions.
+- [ ] Deliver the verified behavior without weakening any acceptance condition.
+
+Ground truth: the user tested Navy opening a track-header context menu followed
+by Purple right-clicking another track header in the same Live window. Result:
+**one menu closes or takes over**. The current device therefore FAILS this
+requirement. Previous controller/package delivery is not acceptance of native
+Live interaction isolation. No replacement UI, serialized input, or separate
+Live instances count as satisfying this task.
+
+Investigation: the vendor documents Multiplex ownership per program/window;
+installed keyboard focus and output options do not create independent native
+Live selections or menus. Live's `Song.View` and `Application.View` expose shared
+selection/focus with no per-user native interaction context. No supported
+mechanism satisfying the complete requirement was found. Implementation and
+acceptance remain incomplete; the failure is documented prominently in the
+device README. Do not label the current controller a solution to this feature.
+
 ## Reusable Max for Live agent skill — 2026-10-20
 
 Deliver an installed `max-for-live-amxd` skill plus a versioned copy under

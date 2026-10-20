@@ -1,9 +1,25 @@
 # CoLaB MouseMux for Live
 
 A native Max for Live MIDI effect that controls the **installed MouseMux
-engine**. Your physical mice use MouseMux's own cursors, routing, and native
-application behavior across Ableton Live. An original Rust bridge connects the
-device to MouseMux's local SDK.
+engine**. An original Rust bridge connects the device to MouseMux's local SDK
+for mode control and status. Native application interaction remains implemented
+by MouseMux and the target application.
+
+**The current device fails the requirement for fully independent simultaneous
+interaction inside one native Ableton Live instance.** In the physical test,
+Navy opened a track-header context menu and Purple right-clicked another track
+header in the same window; one menu closed or took over. This is an acceptance
+failure, despite successful SDK authentication and Multiplex mode readback.
+
+The required result includes independent native context menus, selections,
+highlighting, editing, clicks, and held gestures with no interference. MouseMux
+documents window/program ownership; Live's supported API exposes shared
+selection and focus, without per-user native menu/selection contexts. No
+supported setting or M4L API that supplies the missing isolation was found.
+See the [MouseMux manual](https://www.mousemux.com/pages/manual/),
+[Song.View](https://docs.cycling74.com/apiref/lom/song_view/), and
+[Application.View](https://docs.cycling74.com/apiref/lom/application_view/).
+The independent-interaction feature remains incomplete.
 
 The device uses Max 9 `v8` for Live integration, initialized by
 `live.thisdevice`, and `node.script` to manage the Rust process. MIDI passes
@@ -84,9 +100,12 @@ Loading did not start a bridge or request a MouseMux mode.
 
 Automated checks cover SDK protocol/state handling, process lifecycle, panel
 state, the AMXD container, and loading the packaged manager beneath an unrelated
-ES-module package. Physical two-mouse interaction, in-Live MIDI playback, and
-Live Set save/reopen remain unverified. The Web SDK was not listening on 41001
-during the final host check; enable it before clicking Connect.
+ES-module package. After the Web SDK was enabled, the installed bridge
+authenticated, read Multiplex mode and five pointer users (Navy and Purple
+active), refreshed state, and exited cleanly without sending mode commands.
+The subsequent two-mouse native context-menu test failed as recorded above.
+The remaining concurrent native interaction tests, in-Live MIDI playback,
+and Live Set save/reopen remain unverified.
 
 ## Max runtime troubleshooting
 
