@@ -1,0 +1,19 @@
+interface:
+  display_name: "Max for Live Devices"
+  short_description: "Build AMXD devices with Max and Ableton MCP guidance"
+  default_prompt: "Use $max-for-live-amxd to build and validate a native Max for Live device with the appropriate MCP tools."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "maxmsp"
+      description: "Inspect and edit the Max patch containing the MaxMSP agent when connected."
+      transport: "stdio"
+    - type: "mcp"
+      value: "producer-pal"
+      description: "Read Ableton Live session and device state through a loaded Producer Pal device."
+      transport: "streamable_http"
+      url: "http://localhost:3350/mcp"
+
+policy:
+  allow_implicit_invocation: true
