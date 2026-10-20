@@ -1,5 +1,32 @@
 # CoLaB Consolidation — Target (b): Single Self-Contained M4L Device
 
+## Reusable Max for Live agent skill — 2026-10-20
+
+Deliver an installed `max-for-live-amxd` skill plus a versioned copy under
+`skills/`. Include source-verified AMXD packaging, native device UI and lifecycle
+guidance, MCP discovery/setup references, and the MouseMux SDK bridge lessons.
+Skill installation is the deployment; no database migration or Railway service
+applies. Preserve the separate device implementation work already in progress.
+
+- [x] Inspect local project instructions, builders, MCP servers, and official Max documentation.
+- [x] Write the skill, MCP metadata/references, and a template-based AMXD helper.
+- [x] Validate the skill and helper; independently exercise realistic task routing.
+- [x] Install under the active Codex skills directory and verify copied files.
+- [x] Commit the skill's scoped changes, push origin/master, and verify remote delivery.
+
+Verification: skill validator, MCP metadata, and reference links pass; all 13
+helper tests and 43 existing repository tests pass. All three installed stock
+AMXD categories pass inspection. An independent agent used the skill to build
+and inspect a fresh MIDI pass-through package in a temporary directory.
+This proves offline authoring, not Live loading or physical MIDI behavior.
+
+Delivery: eight files installed and hash-verified at
+`C:\Users\Owner\.codex\skills\max-for-live-amxd`. Skill implementation commit
+`f8654fe` is on origin/master; Node 18/20/22 CI run `39385704832` passed.
+MaxMSP and Producer Pal integration metadata and setup guidance are included;
+active MCP connections remain unverified. No runtime/configuration changes or
+database migrations were required for this skill installation.
+
 ## MouseMux integration — 2026-10-19
 
 Scope: add independent MouseMux user input to CoLaB's existing multi-cursor path, including the pointer features consumed by its Jam interface. Preserve the consolidation work below and unrelated workspace changes. Keyboard forwarding, screen sharing, and native desktop virtualization remain MouseMux capabilities rather than implemented CoLaB Jam features.
