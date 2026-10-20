@@ -61,6 +61,10 @@ opened through Max rather than rewritten by this helper.
 - Node subprocesses and external vendor installations may need additional
   packaging. Do not promise that freezing automatically embeds an independently
   launched executable or installs a vendor application.
+- Declare the Node module format in a neighboring `package.json` and include it
+  in the installed package. A CommonJS `.js` manager can fail when a parent of
+  the User Library contains `"type": "module"`. Test the packaged manager under
+  such an ancestor using the bundled Node version; do not edit that ancestor.
 - Confirm OS/architecture compatibility and redistribution rights for bundled
   externals and binaries. Keep license material and hashes with distributable
   packages. Avoid absolute developer-machine paths in shipped patches.
@@ -84,3 +88,10 @@ opened through Max rather than rewritten by this helper.
 Report each level separately. Screenshot evidence proves appearance, not MIDI
 correctness or independent physical inputs. A failed desktop helper limits host
 validation; successful package tests remain useful evidence.
+
+If Windows reports `Error 127 loading external node.script`, inspect the actual
+Max runtime and search paths before changing JavaScript. In the validated local
+case, Live's bundled Max 9.0.10 found a Max 9.1.4 external through an overly broad
+installation-root search path; that external imported a missing MaxAPI function.
+Back up and remove only the conflicting path, then restart a saved/test host.
+Do not mix runtime DLLs or redistribute Max externals to mask the conflict.

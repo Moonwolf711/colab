@@ -27,6 +27,50 @@ MaxMSP and Producer Pal integration metadata and setup guidance are included;
 active MCP connections remain unverified. No runtime/configuration changes or
 database migrations were required for this skill installation.
 
+## Native MouseMux Max for Live device — 2026-10-20
+
+Deliver a Max 9 / Live 12.2+ MIDI-effect `.amxd` that controls the installed
+MouseMux engine through its actual SDK. A Rust executable supplies the local
+SDK connection; Max `v8` initializes LiveAPI only after `live.thisdevice`.
+Independent pointers across Live remain MouseMux's native behavior, subject to
+the installed edition and application compatibility. No synthetic cursor engine.
+
+- [x] Confirm user intent, installed SDK mode setter, supported native runtime, and stock AMXD format.
+- [x] Implement Rust SDK bridge with authenticated readiness, observed modes/users, expiry and disconnect handling.
+- [x] Build native Max controls, lifecycle manager, v8 LiveAPI initialization, and valid AMXD package.
+- [x] Test bridge/protocol/lifecycle, build Windows release, and validate device in a disposable Live set.
+- [x] Install complete device package into the configured Live User Library; record physical-test limits.
+- [ ] Commit only scoped changes, push origin/master, and verify CI/local deployment status.
+
+Resumed using `max-for-live-amxd`: review the existing bridge and native panel
+in parallel; repair verified mode-confirmation, button-routing, and packaging
+issues; build and install a complete package in the configured User Library.
+Check readback and rendering in a disposable Live session if the available
+application controls permit it. Record physical two-mouse tests separately.
+
+Verification: 13 Rust protocol tests, Clippy with warnings denied, 16 Node
+manager/panel tests, 8 Python device tests, 13 shared AMXD helper tests, and 43
+existing repository tests pass. The packaged manager also loads beneath an
+ES-module ancestor using Live's bundled Node 20.6.1.
+
+Deployment: complete package installed and hash-verified in
+`X:\Ableton\User Library\Presets\MIDI Effects\Max MIDI Effect\CoLaB MouseMux`.
+Live 12.3.8 / Max 9.0.10 recognizes the installed AMXD as a MIDI effect, renders
+all seven controls, resolves the host track, and starts the current Node manager
+without load errors. Removal/reload leaves only the current manager; loading
+starts no Rust bridge and sends no mode change. Readback, log segment, screenshot,
+and the disposable set remain under the ignored `validation/` directory.
+
+Host fixes: backed up and removed the conflicting Max 9.1.4 installation-root
+search path from the shared Max 9 settings; corrected duplicate panel painter
+state; packaged a local CommonJS boundary for the actual User Library location.
+Physical two-mouse interaction, MIDI playback, and Live Set save/reopen remain
+unverified. The final host check found no Web SDK listener on port 41001.
+
+Work lives in `multimouse/m4l-mousemux/`. Vendor runtime remains user-installed;
+do not redistribute vendor binaries, license data, or decompiled source.
+This desktop feature has no Railway service or database migration.
+
 ## MouseMux integration — 2026-10-19
 
 Scope: add independent MouseMux user input to CoLaB's existing multi-cursor path, including the pointer features consumed by its Jam interface. Preserve the consolidation work below and unrelated workspace changes. Keyboard forwarding, screen sharing, and native desktop virtualization remain MouseMux capabilities rather than implemented CoLaB Jam features.

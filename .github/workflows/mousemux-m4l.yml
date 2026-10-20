@@ -1,0 +1,55 @@
+name: MouseMux Max for Live
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'multimouse/m4l-mousemux/**'
+      - 'skills/max-for-live-amxd/scripts/amxd.py'
+      - '.github/workflows/mousemux-m4l.yml'
+  pull_request:
+    paths:
+      - 'multimouse/m4l-mousemux/**'
+      - 'skills/max-for-live-amxd/scripts/amxd.py'
+      - '.github/workflows/mousemux-m4l.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-package:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: multimouse/m4l-mousemux
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Rust tooling
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default stable
+      - name: Rust formatting
+        run: cargo fmt --manifest-path bridge/Cargo.toml -- --check
+      - name: Rust tests
+        run: cargo test --manifest-path bridge/Cargo.toml --locked
+      - name: Rust lint
+        run: cargo clippy --manifest-path bridge/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Manager lifecycle tests
+        run: node --test test/manager.test.js test/panel.test.js
+      - name: Device packaging tests
+        run: python -B -m unittest discover -s test -p test_device.py
+      - name: Build device package
+        run: ./scripts/build-package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CoLaB-MouseMux-Windows
+          path: multimouse/m4l-mousemux/dist/CoLaB-MouseMux-Windows.zip
+          if-no-files-found: error

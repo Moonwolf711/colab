@@ -6,8 +6,8 @@ the mode values and transport details below belong to MouseMux.
 
 Source in Owner's workspace:
 `C:\Users\Owner\colab\multimouse\m4l-mousemux`.
-Read `PROTOCOL.md`, `README.md`, and current source before changes; the package
-was still undergoing host validation when this skill was created.
+Read `PROTOCOL.md`, `README.md`, and current source before changes. Consult the
+project's validation record for the tested host and remaining physical checks.
 
 ## Preserve the requested engine and external state
 
@@ -17,7 +17,8 @@ was still undergoing host validation when this skill was created.
   unchanged. Only an explicit mode command requests a change.
 - Wait for an observed mode before changing it. Preserve observed multi-keyboard
   state: current protocol maps switched/multiplex to `4`/`6` with multi-keyboard
-  set, versus `0`/`2` without it. Verify these mappings against current SDK/source.
+  set, versus `3`/`5` without it; Native is `1`. The engine can also report
+  Merged (`2`). Verify these mappings against current SDK/source.
 - Display the mode reported by the engine; a button click means pending until
   an engine event confirms it. Show login failure, expiry, disconnect, and stale
   status clearly. Do not replay a pending change after reconnect.
@@ -47,7 +48,8 @@ Run in `multimouse/m4l-mousemux`:
 cargo fmt --manifest-path bridge/Cargo.toml -- --check
 cargo test --manifest-path bridge/Cargo.toml --locked
 cargo clippy --manifest-path bridge/Cargo.toml --all-targets --locked -- -D warnings
-node --test test/manager.test.js
+node --test test/manager.test.js test/panel.test.js
+python -B -m unittest discover -s test -p test_device.py
 pwsh -File scripts/build-package.ps1
 ```
 

@@ -31,6 +31,9 @@ Build a compact presentation panel with clear labels, related controls grouped
 together, readable value/status text, and restrained colors. Prefer native
 `live.*` controls for interaction; use `v8ui` when custom drawing adds value.
 Keep state distinguishable without relying on color alone.
+Load a `v8ui` script through its filename/textfile fields. Do not also assign
+that same stateful script as `jspainterfile`: its separate painter context can
+draw initial values while messages update a different script instance.
 
 Set `openinpresentation`, explicit `presentation_rect` values, and an intentional
 device width. Design within Live's 169-pixel device height and check the actual
